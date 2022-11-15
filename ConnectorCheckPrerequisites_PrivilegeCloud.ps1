@@ -150,7 +150,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "1"
+[int]$versionNumber = "3"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -159,9 +159,22 @@ $global:LOG_FILE_PATH = "$ScriptLocation\_ConnectorCheckPrerequisites_PrivilegeC
 $global:CONFIG_PARAMETERS_FILE = "$ScriptLocation\$PSMConfigFile"
 
 # ------ SET Global Parameters ------
-$global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
+$global:g_ConsoleIPstd = "console.privilegecloud.cyberark.com"
+$global:g_ConsoleIPispss = "console.privilegecloud.cyberark.cloud"
 $global:g_ScriptName = "ConnectorCheckPrerequisites_PrivilegeCloud.ps1"
 $global:g_CryptoPath = "C:\ProgramData\Microsoft\Crypto"
+
+# ------ SET Schedule Task Parameters ------
+$global:TriggerAtStart = New-ScheduledTaskTrigger -AtStartup
+$global:TriggerAtLogon = New-ScheduledTaskTrigger -AtLogon
+$global:ActionNLA = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-DisableNLA`""
+$global:ActionRDS = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`""
+$global:taskNameNLA = "DisableNLAafterRDSInstall"
+$global:taskNameRDS = "CompleteRDSInstallAfterRestart"
+$global:taskDescrNLA = "DisableNLAafterRDSInstall"
+$global:taskDescrRDS = "CompleteRDSInstallAfterRestart"
+$global:taskNameDisableNLA = "DisableNLAafterRDSInstall"
+$global:taskNameDisableRDS = "CompleteRDSInstallAfterRestart"
 
 $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
@@ -2137,7 +2150,7 @@ Function Test-NetConnectivity
 	)
 	$errorMsg = ""
 	$result = $False
-	If(![string]::IsNullOrEmpty($ComputerName) -and ![string]::IsNullOrEmpty($portalSubDomainURL))
+	If(![string]::IsNullOrEmpty($ComputerName)) # -and ![string]::IsNullOrEmpty($portalSubDomainURL))
 	{
 		try{
 			If(Get-Command Test-NetConnection -ErrorAction Ignore)
@@ -2285,6 +2298,100 @@ Function MachineNameCharLimit()
 	}
 }
 
+function GetOSVersionInternal()
+{
+Set-Variable OS_VERSION_WINDOWS_2008_R2_PCKG -value 0 -scope script
+Set-Variable OS_VERSION_WINDOWS_2012_R2_PCKG -value 1 -scope script
+Set-Variable OS_VERSION_WINDOWS_2016_PCKG -value 2 -scope script
+Set-Variable OS_VERSION_WINDOWS_2019_PCKG -value 3 -scope script
+Set-Variable OS_VERSION_UNKNOWN_PCKG -value -1 -scope script
+Set-Variable UNKNOWN_ERROR_PCKG -value -2
+
+	$ReturnCode = $UNKNOWN_ERROR_PCKG;
+	
+	trap 
+	{ 
+		exit $UNKNOWN_ERROR_PCKG
+	};
+
+	if(([Environment]::OSVersion.Version -ge (new-object 'Version' 10,0,17763)) -eq $True)
+	{
+		$ReturnCode = $OS_VERSION_WINDOWS_2019_PCKG;
+	}
+	elseif(([Environment]::OSVersion.Version -ge (new-object 'Version' 10,0)) -eq $True)
+	{
+		$ReturnCode = $OS_VERSION_WINDOWS_2016_PCKG;
+	}
+	else 
+	{ 
+		$ReturnCode = $OS_VERSION_UNKNOWN_PCKG;
+	};
+	
+	return $ReturnCode
+}
+
+function NewSessionDeployment([string]$ConnectionBroker, [string]$SessionHost)
+{
+    New-RDSessionDeployment -ConnectionBroker ("$ConnectionBroker") -SessionHost ("$SessionHost") -WarningAction SilentlyContinue
+}
+
+function NewSessionCollection([string]$CollectionName, [string]$SessionHost, [string]$ConnectionBroker)
+{
+    New-RDSessionCollection -CollectionName $CollectionName -SessionHost ("$SessionHost") -ConnectionBroker ("$ConnectionBroker") -WarningAction SilentlyContinue
+}
+
+function IsLoginWithDomainUser()
+{
+       Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+	   $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
+	   
+	   if($UserPrincipal.ContextType -eq "Domain") 
+	   {
+			return $true
+	   }
+	   else
+	   {
+			return $false
+	   } 	
+}
+
+
+function RemoveValueFromRegistry([string]$key, [string]$name)
+{
+    Write-LogMessage -Type Info -Msg "Removing the registry value '$key$name'"
+	Try 
+	{
+		# if registry path does not exists, there is no need to remove it.
+		if((Test-Path $key))
+		{
+			if (Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue)
+			{
+				Remove-ItemProperty -Path $key -Name $name -ErrorAction Stop
+				
+				#Verify that the value no longer exists
+				if (Get-ItemProperty -Path $key -Name $name -ErrorAction SilentlyContinue)
+				{
+                    Write-LogMessage -Type Error -Msg "'Remove-ItemProperty' command failed to remove the '$key$name' registry key"
+                    return $false
+				}
+                Write-LogMessage -Type Success -Msg "Successfully removed registry value '$key$name'."
+                return $true
+			}
+		}
+	}
+	Catch 
+	{
+        Write-LogMessage -Type error -Msg "Failed to remove registry key: '$key$name'"
+        return $false
+	}
+	 Write-LogMessage -Type Info -Msg "Registry value '$key$name' does not exist"
+}
+
+
+			import-module RemoteDesktop;
+			import-module RemoteDesktop -Verbose:$false | Out-Null;
+
+
 # @FUNCTION@ ======================================================================================================================
 # Name...........: InstallRDS
 # Description....: Installs RDS role on the machine.
@@ -2292,6 +2399,11 @@ Function MachineNameCharLimit()
 # Return Values..: True/False
 # =================================================================================================================================
 function InstallRDS{
+$script:CollectionName="PSM-RemoteApp"
+$script:TerminalServicesKey = "HKLM:\SOFTWARE\Policies\Microsoft\Windows NT\Terminal Services\"
+$script:RedirectClipboardValue = "fDisableClip"
+$script:RedirectDrivesValue	= "fDisableCdm"
+
     # Get the details of the Remote Desktop Services rule
     Write-LogMessage -Type Info -Msg "Checking to see if we need to deploy RDS Roles" -Early
     try {
@@ -2300,50 +2412,129 @@ function InstallRDS{
 		# Check if the RDS rule is not installed
 		    if ($RDSFeature.Installed -eq $false)
 		    {
+                $AdminUserName = whoami
+                Write-LogMessage -type Info -MSG "Logged in User is: $AdminUserName" -Early
+                
 		    	Write-LogMessage -type Info -MSG "Installing Microsoft Remote Desktop Services, this may take a few minutes..." -Early
 		    	# Install the RD-Session Host (ignore the warning that is prompt to the user by microsoft to restart the machine)
 		    	add-windowsfeature Remote-Desktop-Services,RDS-RD-Server -WarningAction SilentlyContinue
 
                 # Set Schedule Task to Disable NLA
-                SetScheduledTaskNLA
+                SetScheduledTask -taskName $taskNameNLA -TriggerType $TriggerAtStart -taskDescription $taskDescrNLA -action $actionNLA -AdminUsername SYSTEM
+
+                # Set Schedule Task to resume RDS install after user logs back in
+                SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
 
 		    	Write-LogMessage -type Warning -MSG "The server will restart to apply Microsoft Remote Desktop Services, press ENTER to continue"
 		    	Pause
                 Restart-Computer -Force
 		    }
-    }
-    catch {
-        $ExceptionMsg = "Failed to install RDS rules. Error: " + ($_.Exception).Message
-        Write-LogMessage -type Error "$($ExceptionMsg)"
-    }
+            Else # If the Remote Desktop Rule is installed , we make sure the connection broker is also installed (such scenario will happen after we restart the machine)
+            {
+                UnsetScheduledTask -taskName $taskNameRDS
+
+                Write-LogMessage -type info -MSG "Remote-Desktop-Services (RD Session Host) is already installed on the machine. Checking if RDS-Connection-Broker is installed" -Early
+                # Checks to see if the executing account is a domain member/user which is a pre-requisite for Connection Broker
+			    $CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+			    $PrincipalObject = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
+			    if (-not (IsLoginWithDomainUser))
+			    {
+                    Write-LogMessage -type info -MSG "The account is not a domain user which is needed to install Connection Broker. This feature will not be installed" -Early
+				    # if the computer is in a domain and the user is local, display relevant message
+				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
+				    {
+				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and return to the prerequisite stage." -Early
+				    }
+			    }
+			    # Get the details of the Connection Broker rule
+			    $ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
+
+			    # Check if the Connection broker rule is not installed
+			    if ($ConnectionBrokerFeature.Installed -eq $false)
+                {
+                    try
+                    {
+                        # Make sure Redirect Drives and Clipboard is not configured which is mandatory for Connection Broker installation
+                        RemoveValueFromRegistry $TerminalServicesKey $RedirectClipboardValue
+                        RemoveValueFromRegistry $TerminalServicesKey $RedirectDrivesValue
+                        
+                        Write-LogMessage -type info -MSG "Installing RDS-Connection-Broker rule" -Early
+
+                        # Check if logged in user domain matches the machine domain, in cases where Primary DNS suffix is set, it will be different.
+                        if($(Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\tcpip\Parameters | select -ExpandProperty Domain) -eq $env:userdnsdomain)
+                        {
+                            $cb="$env:computername.$env:userdnsdomain"
+                        }
+                        Else
+                        {
+                            $cb="$env:computername.$(Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\tcpip\Parameters | select -ExpandProperty Domain)"
+                        }
+                        # Installing Remote Desktop Broker - Session Host
+                        NewSessionDeployment ($cb) ($cb)
+                        
+                        # Configure the RDS Collection
+                        NewSessionCollection ($CollectionName) ($cb) ($cb)
+                        		 				 
+                        Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
+                    }
+			        catch
+			        {
+					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker rule"
+			        }
+                }
+			    else
+                {
+				    # Get the details of the Windows Internal Database rule
+				    $WindowsInternalDatabaseFeature = Get-WindowsFeature *Windows-Internal-Database*
+
+				    # Check if Windows Internal Database is installed as it is required for the Connection Broker to work properly
+				    if ($WindowsInternalDatabaseFeature.Installed -eq $false)
+				    {
+					    throw "Failed to validate Connection Broker installation.The mandatory Windows Internal Database feature is not installed." 
+				    }
+				    else
+				    {
+					    Write-LogMessage -type info -MSG "RDS-Connection-Broker is already installed on the machine. No changes will be applied" -Early
+				    }
+			    }
+		    }
+        }
+        catch
+        {
+            $ExceptionMsg = "Failed to install RDS rules. Error: " + ($_.Exception).Message
+            Write-LogMessage -type Error "$($ExceptionMsg)"
+        }
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: SetScheduledTaskNLA
-# Description....: Add Schedule Task that runs after restart and Disables NLA after RDS deployment
+# Name...........: SetScheduledTask
+# Description....: Add Schedule Task that runs after restart
 # Parameters.....: None
 # Return Values..: 
 # =================================================================================================================================
-function SetScheduledTaskNLA {
+function SetScheduledTask {
+    [CmdletBinding()]
+	param(
+		$AdminUsername,
+        $TriggerType,
+        $taskName,
+        $action,
+        $taskDescription
+	)
     Process {
-        Write-LogMessage -type Info -MSG "START SetScheduledTask"
+        Write-LogMessage -type Info -MSG "Creating scheduled task: $taskName" -Early
 
         # Check if scheduled task doesn't exists. If it doesn't, creating it.
-        $taskName = "DisableNLAafterRDSInstall"
         $taskExists = Get-ScheduledTask | Where-Object {$_.TaskName -like $taskName }
 
-        if(!$taskExists) {
-            
-            $ScriptPath = $PSScriptRoot + '\' + 'ConnectorCheckPrerequisites_PrivilegeCloud.ps1'
-            $Action = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptPath`" `"-DisableNLA`""
-            $Trigger = New-ScheduledTaskTrigger -AtStartup
+        if(!$taskExists) {            
             $params = @{
                 "TaskName"    = $taskName
                 "Action"      = $action
-                "Trigger"     = $trigger
-                "User"        = "SYSTEM"
+                "Trigger"     = $TriggerType
+                "User"        = "$AdminUsername"
                 "RunLevel"    = "Highest"
-                "Description" = "DisableNLAafterRDSInstall"
+                "Description" = "$taskDescription"
             }
             $null = Register-ScheduledTask @params
         } else {
@@ -2353,15 +2544,18 @@ function SetScheduledTaskNLA {
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: UnsetScheduledTaskNLA
-# Description....: Removes the Schedule Task once NLA is disabled.
+# Name...........: UnsetScheduledTask
+# Description....: Removes a Scheduled Task
 # Parameters.....: None
 # Return Values..: 
 # =================================================================================================================================
-function UnsetScheduledTaskNLA {
+function UnsetScheduledTask {
+    [CmdletBinding()]
+	param(
+		$taskName
+	)
     Process {
         # Check if scheduled task doesn't exists. If it doesn't, creating it.
-        $taskName = "DisableNLAafterRDSInstall"
         $taskExists = Get-ScheduledTask | Where-Object {$_.TaskName -like $taskName }
 
         # Check if scheduled task exists. If it is, deleting it.
@@ -2385,7 +2579,7 @@ function Disable-NLA()
     $disableNLA = (Get-WmiObject -Class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices -ComputerName $env:COMPUTERNAME -Filter "TerminalName='RDP-tcp'").SetUserAuthenticationRequired(0)
 
     # Remove scheduled Task so we don't run it infinitely.
-    UnsetScheduledTaskNLA
+    UnsetScheduledTask -taskName $taskNameNLA
     Exit
 }
 
@@ -2662,13 +2856,16 @@ param
 
         # Check if standard or shared services implementation.
         if($PortalURL -like "*.privilegecloud.cyberark.com*"){
-        # Standard
-        $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.com"
-        $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.com"
-        }Else{
-        $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.cloud"
-        $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.cloud"
-        }		
+            # Standard
+            $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.com"
+            $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.com"
+        }Elseif($PortalURL -like "*.privilegecloud.cyberark.cloud*"){
+            # ispss
+            $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.cloud"
+            $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.cloud"
+        }Elseif($portalSubDomainURL -eq $null){
+            # user didn't enter anything, do nothing in this case, so it skips the connection test.
+        }
 			
 		# Create the Config file for next use
 		$parameters = @{
@@ -2678,6 +2875,8 @@ param
             CustomerId = $CustomerId.trim()
 		}
 		$parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
+        # deal with ispss
+        if($PortalURL -like "*.privilegecloud.cyberark.com*"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
 	 else{
 		$parameters = Import-CliXML -Path $CONFIG_PARAMETERS_FILE
@@ -2685,6 +2884,8 @@ param
 		$script:TunnelIP = $parameters.TunnelIP
 		$script:PortalURL = $parameters.PortalURL
         $script:CustomerId = $parameters.CustomerId
+        # deal with ispss
+        if($PortalURL -like "*.privilegecloud.cyberark.com"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
  }
 
@@ -2867,7 +3068,7 @@ Function CheckPrerequisites()
 Function Test-VersionUpdate()
 {
 	# Define the URLs to be used
-	$pCloudServicesURL = "https://raw.githubusercontent.com/pCloudServices/ps/master"
+	$pCloudServicesURL = "https://raw.githubusercontent.com/pCloudServices/cmprereq/master"
 	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
@@ -3281,22 +3482,196 @@ else
         # Disable NLA after RDS deployment
         if($DisableNLA){Disable-NLA}
 
+        # Main Pre-requisites check
+		CheckPrerequisites
         
         # Install RDS
         InstallRDS
 
-
-
-        # Main Pre-requisites check
-		CheckPrerequisites
         # If VaultConnectivity passed, run CPM Test.
         if($VaultConnectivityOK -eq $true){CPMConnectionTest}
 	} catch	{
 		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
 	}
 }
-Write-LogMessage -Type Info -Msg "Script Ended" -Footer	
+Write-LogMessage -Type Info -Msg "Script Ended" -Footer
+Pause
 ###########################################################################################
 # Main end
 ###########################################################################################	
 #endregion
+# SIG # Begin signature block
+# MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAFU7rhPtJjCBq2
+# HJz3dujl8PvJzzC7IsqVAXZDY15msaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
+# ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
+# bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
+# CzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTIwMAYDVQQD
+# EylHbG9iYWxTaWduIEdDQyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMDCCAiIw
+# DQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAMsg75ceuQEyQ6BbqYoj/SBerjgS
+# i8os1P9B2BpV1BlTt/2jF+d6OVzA984Ro/ml7QH6tbqT76+T3PjisxlMg7BKRFAE
+# eIQQaqTWlpCOgfh8qy+1o1cz0lh7lA5tD6WRJiqzg09ysYp7ZJLQ8LRVX5YLEeWa
+# tSyyEc8lG31RK5gfSaNf+BOeNbgDAtqkEy+FSu/EL3AOwdTMMxLsvUCV0xHK5s2z
+# BZzIU+tS13hMUQGSgt4T8weOdLqEgJ/SpBUO6K/r94n233Hw0b6nskEzIHXMsdXt
+# HQcZxOsmd/KrbReTSam35sOQnMa47MzJe5pexcUkk2NvfhCLYc+YVaMkoog28vmf
+# vpMusgafJsAMAVYS4bKKnw4e3JiLLs/a4ok0ph8moKiueG3soYgVPMLq7rfYrWGl
+# r3A2onmO3A1zwPHkLKuU7FgGOTZI1jta6CLOdA6vLPEV2tG0leis1Ult5a/dm2tj
+# IF2OfjuyQ9hiOpTlzbSYszcZJBJyc6sEsAnchebUIgTvQCodLm3HadNutwFsDeCX
+# pxbmJouI9wNEhl9iZ0y1pzeoVdwDNoxuz202JvEOj7A9ccDhMqeC5LYyAjIwfLWT
+# yCH9PIjmaWP47nXJi8Kr77o6/elev7YR8b7wPcoyPm593g9+m5XEEofnGrhO7izB
+# 36Fl6CSDySrC/blTAgMBAAGjggGtMIIBqTAOBgNVHQ8BAf8EBAMCAYYwEwYDVR0l
+# BAwwCgYIKwYBBQUHAwMwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUJZ3Q
+# /FkJhmPF7POxEztXHAOSNhEwHwYDVR0jBBgwFoAUHwC/RoAK/Hg5t6W0Q9lWULvO
+# ljswgZMGCCsGAQUFBwEBBIGGMIGDMDkGCCsGAQUFBzABhi1odHRwOi8vb2NzcC5n
+# bG9iYWxzaWduLmNvbS9jb2Rlc2lnbmluZ3Jvb3RyNDUwRgYIKwYBBQUHMAKGOmh0
+# dHA6Ly9zZWN1cmUuZ2xvYmFsc2lnbi5jb20vY2FjZXJ0L2NvZGVzaWduaW5ncm9v
+# dHI0NS5jcnQwQQYDVR0fBDowODA2oDSgMoYwaHR0cDovL2NybC5nbG9iYWxzaWdu
+# LmNvbS9jb2Rlc2lnbmluZ3Jvb3RyNDUuY3JsMFUGA1UdIAROMEwwQQYJKwYBBAGg
+# MgECMDQwMgYIKwYBBQUHAgEWJmh0dHBzOi8vd3d3Lmdsb2JhbHNpZ24uY29tL3Jl
+# cG9zaXRvcnkvMAcGBWeBDAEDMA0GCSqGSIb3DQEBCwUAA4ICAQAldaAJyTm6t6E5
+# iS8Yn6vW6x1L6JR8DQdomxyd73G2F2prAk+zP4ZFh8xlm0zjWAYCImbVYQLFY4/U
+# ovG2XiULd5bpzXFAM4gp7O7zom28TbU+BkvJczPKCBQtPUzosLp1pnQtpFg6bBNJ
+# +KUVChSWhbFqaDQlQq+WVvQQ+iR98StywRbha+vmqZjHPlr00Bid/XSXhndGKj0j
+# fShziq7vKxuav2xTpxSePIdxwF6OyPvTKpIz6ldNXgdeysEYrIEtGiH6bs+XYXvf
+# cXo6ymP31TBENzL+u0OF3Lr8psozGSt3bdvLBfB+X3Uuora/Nao2Y8nOZNm9/Lws
+# 80lWAMgSK8YnuzevV+/Ezx4pxPTiLc4qYc9X7fUKQOL1GNYe6ZAvytOHX5OKSBoR
+# HeU3hZ8uZmKaXoFOlaxVV0PcU4slfjxhD4oLuvU/pteO9wRWXiG7n9dqcYC/lt5y
+# A9jYIivzJxZPOOhRQAyuku++PX33gMZMNleElaeEFUgwDlInCI2Oor0ixxnJpsoO
+# qHo222q6YV8RJJWk4o5o7hmpSZle0LQ0vdb5QMcQlzFSOTUpEYck08T7qWPLd0jV
+# +mL8JOAEek7Q5G7ezp44UCb0IXFl1wkl1MkHAHq4x/N36MXU4lXQ0x72f1LiSY25
+# EXIMiEQmM2YBRN/kMw4h3mKJSAfa9TCCB28wggVXoAMCAQICDHBNxPwWOpXgXVV8
+# DDANBgkqhkiG9w0BAQsFADBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFs
+# U2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVWIENvZGVT
+# aWduaW5nIENBIDIwMjAwHhcNMjIwMjE1MTMzODM1WhcNMjUwMjE1MTMzODM1WjCB
+# 1DEdMBsGA1UEDwwUUHJpdmF0ZSBPcmdhbml6YXRpb24xEjAQBgNVBAUTCTUxMjI5
+# MTY0MjETMBEGCysGAQQBgjc8AgEDEwJJTDELMAkGA1UEBhMCSUwxEDAOBgNVBAgT
+# B0NlbnRyYWwxFDASBgNVBAcTC1BldGFoIFRpa3ZhMRMwEQYDVQQJEwo5IEhhcHNh
+# Z290MR8wHQYDVQQKExZDeWJlckFyayBTb2Z0d2FyZSBMdGQuMR8wHQYDVQQDExZD
+# eWJlckFyayBTb2Z0d2FyZSBMdGQuMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
+# CgKCAgEA8rPX6yAVM64+/qMQEttWp7FdAvq9UfgxBrW+R0NtuXhKnjV05zmIL6zi
+# AS0TlNrQqu5ypmuagOWzYKDtIcWEDm6AuSK+QeZprW69c0XYRdIf8X/xNUawXLGe
+# 5LG6ngs2uHGtch9lt2GLMRWILnKviS6l6F06HOAow+aIDcNGOukddypveFrqMEbP
+# 7YKMekkB6c2/whdHzDQiW6V0K82Xp9XUexrbdnFpKWXLfQwkzjcG1xmSiHQUpkSH
+# 4w2AzBzcs+Nidoon5FEIFXGS2b1CcCA8+Po5Dg7//vn2thirXtOqaC+fjP1pUG7m
+# vrZQMg3lTHQA/LTL78R3UzzNb4I9dc8yualcYK155hRU3vZJ3/UtktAvDPC/ewoW
+# thebG77NuKU8YI6l2lMg7jMFZ1//brICD0RGqhmPMK9MrB3elSuMLaO566Ihdrlp
+# zmj4BRDCfPuH0QfwkrejsikGEMo0lErfHSjL3NaiE0PPoC4NW7nc6Wh4Va4e3VFF
+# Z9zdnoTsCKJqk4s13MxBbjdLIkCcfknMSxAloOF9h6IhzWOylSROAy/TZfGL5kzQ
+# qxzcIhdXLWHHWdbz4DD3qxYc6g1G3ZwgFPWf7VbKQU3FsAxgiJvmKPVeOfIN4iYT
+# V4toilRR8KX/IaA1NMrN9EiA//ZhN3HONS/s6AxjjHJTR29GOQkCAwEAAaOCAbYw
+# ggGyMA4GA1UdDwEB/wQEAwIHgDCBnwYIKwYBBQUHAQEEgZIwgY8wTAYIKwYBBQUH
+# MAKGQGh0dHA6Ly9zZWN1cmUuZ2xvYmFsc2lnbi5jb20vY2FjZXJ0L2dzZ2NjcjQ1
+# ZXZjb2Rlc2lnbmNhMjAyMC5jcnQwPwYIKwYBBQUHMAGGM2h0dHA6Ly9vY3NwLmds
+# b2JhbHNpZ24uY29tL2dzZ2NjcjQ1ZXZjb2Rlc2lnbmNhMjAyMDBVBgNVHSAETjBM
+# MEEGCSsGAQQBoDIBAjA0MDIGCCsGAQUFBwIBFiZodHRwczovL3d3dy5nbG9iYWxz
+# aWduLmNvbS9yZXBvc2l0b3J5LzAHBgVngQwBAzAJBgNVHRMEAjAAMEcGA1UdHwRA
+# MD4wPKA6oDiGNmh0dHA6Ly9jcmwuZ2xvYmFsc2lnbi5jb20vZ3NnY2NyNDVldmNv
+# ZGVzaWduY2EyMDIwLmNybDATBgNVHSUEDDAKBggrBgEFBQcDAzAfBgNVHSMEGDAW
+# gBQlndD8WQmGY8Xs87ETO1ccA5I2ETAdBgNVHQ4EFgQU0Vg7IAYAK18fI9dI1YKi
+# WA0D1bEwDQYJKoZIhvcNAQELBQADggIBAFOdA15mFwRIM54PIL/BDZq9RU9IO+YO
+# lAoAYTJHbiTY9ZqvA1isS6EtdYKJgdP/MyZoW7RZmcY5IDXvXFj70TWWvfdqW/Qc
+# MMHtSqhiRb4L92LtR4lS+hWM2fptECpl9BKH28LBZemdKS0jryBEqyAmuEoFJNDk
+# wxzQVKPksvapvmSYwPiBCtzPyHTRo5HnLBXpK/LUBJu8epAgKz6LoJjnrTIF4U8R
+# owrtUC0I6f4uj+sKYE0iV3/TzwsTJsp7MQShoILPr1/75fQjU/7Pl2fbM++uAFBC
+# sHQHYvar9KLslFPX4g+cDdtOHz5vId8QYZnhCduVgzUGvELmXXR1FYV7oJNnh3eY
+# Xc5gm7vSNKlZB8l7Ls6h8icBV2zQbojDiH0JOD//ph62qvnMp8ev9mvhvLXRCIxc
+# aU7CYI0gNVvg9LPi5j1/tswqBc9XAfHUG9ZYVxYCgvynEmnJ5TuEh6GesGRPbNIL
+# l418MFn4EPQUqxB51SMihIcyqu6+3qOlco8Dsy1y0gC0Hcx+unDZPsN8k+rhueN2
+# HXrPkAJ2bsEJd7adPy423FKbA7bRCOc6dWOFH1OGANfEG0Rjw9RfcsI84OkKpQ7R
+# XldpKIcWuaYMlfYzsl+P8dJru+KgA8Vh7GTVb5USzFGeMyOMtyr1/L2bIyRVSiLL
+# 8goMl4DTDOWeMYIRRDCCEUACAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
+# R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
+# IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
+# AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCj
+# Vl4eP7xPBPTiA4/OUlEsT3XIA9KwMpibjRXeHtIGzDANBgkqhkiG9w0BAQEFAASC
+# AgBrcb5mPDNSouAZbPL6xoL3xiFdEtIkaYUSHfn0UNFrxB639CFormoHWar9RnC/
+# vervo4uZzt0oWBYuIYSa9aWCXHT1gdejT67B9kglfoGDznUNVzDuj4DmKUx+2jc8
+# EhBl9g75bq29adC4xjNdSYHW5E64ZEYEE0DjaXqzQz5SM07pmfAbz9W9XqenJIDK
+# HohNlBSKPg+iTGziC2VzQqNl7gjx2iwgqiOxNIRihitXeTnCTJODX/D8bVvmvu3b
+# gKO8pE1BD8D7ZzXLF97T1mIsd3Rwv4rFXrxEBuAaGacHTX7cTwbzQacPoRRKHPmI
+# Q755XN2xpvhQ0fnCAX7L5XvDeH/8mMUe2Z/taA0mCKWbkKz4Wrd1Y3VGLXmHp3B8
+# gea3Jevisen5E0i0IQ3v8owEBpY2PCn08rQcLkDz2c/mPzkUtgKYTdOx1szRwo5A
+# KUFoOL9yzJwi4c3GjAE5sdD/62kYrK+h71D6bzWsMjaFs6QH6xCJL8OWikTBGiJO
+# Ym+9aEJxsn7OYGbM2TDnD/bJD97Ch1fqdSOuw53jhxLo7j/p8RHwuTles0zJamQH
+# 8/we1GDtt0Ku7LKkKLB04HjNHXygKGLFt2rvQj7IcOEKvmNTRgb+aPBo0zr/ZWEd
+# 0DDFGFcz9brp7JUcCQFwdXmlOvz9Qk9aeMStfzmSMdqvyqGCDiswgg4nBgorBgEE
+# AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
+# BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
+# BgUrDgMCGgUABBTcb4izhXnm07iRaVZQVBv0gjJtHQIUa4ujMI/NrNg+7rC9pGDR
+# vAOPhRYYDzIwMjIxMTE1MTQyNzMwWjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
+# dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
+# U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
+# yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMxFzAVBgNVBAoT
+# DlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVzdCBOZXR3b3Jr
+# MTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZvciBhdXRob3Jp
+# emVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBD
+# ZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEy
+# MzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3Jh
+# dGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMf
+# U3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJKoZIhvcNAQEB
+# BQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawyjwVrhponADKX
+# ak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG50F8eRzLy60b
+# v9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45ncP0mqj0hOHE
+# 0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU1t/HgNuR7v68
+# kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6x
+# zPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4G
+# A1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1UdIARfMF0wWwYL
+# YIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9j
+# cHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYB
+# BQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5jb20wNgYDVR0f
+# BC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNhbC1yb290LmNy
+# bDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQ
+# VGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
+# HwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZIhvcNAQELBQAD
+# ggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZk
+# hHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBj
+# SDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZr
+# jfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv2uybGB+queM6
+# AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6ita
+# s5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWvuswHP6EBIwQi
+# QU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1h
+# bnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29y
+# azEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTAeFw0x
+# NzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsG
+# A1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRy
+# dXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBp
+# bmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCv
+# Doqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQgbTD53R2D6T8n
+# SjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMjdUdwDLNfW48I
+# HXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj
+# 0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEm
+# LP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48
+# A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8EAjAAMGYGA1Ud
+# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
+# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
+# cGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5zeW1hbnRlYy5j
+# b20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYD
+# VR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcwAYYeaHR0cDov
+# L3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9odHRwOi8vdHMt
+# YWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAoBgNVHREEITAf
+# pB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+F
+# zBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
+# DQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZycGMv41UpezlG
+# Tud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZ
+# EPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9EPEZcF1rjpDvV
+# aSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6aescixXTN30cJ
+# hsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GYFHIUJN/HESwf
+# AD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJaMIICVgIBATCB
+# izB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24x
+# HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
+# dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
+# YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
+# 9w0BCQUxDxcNMjIxMTE1MTQyNzMwWjAvBgkqhkiG9w0BCQQxIgQgHR2vVPfeWV4I
+# R/dDJSk6mggiVdaNjLOLnSVYDx3gH7QwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
+# ABBCz8UouDOdED8ds2HjUE4KmTcK4DS7vteR/D6Xh69VCcrzUzr4Tz62sVoyVyrg
+# P49VpTLVB0fLK2fpOLNVsawP9RokKlwMn9n+RXxAj7gnjGrylgpAUXjMkPXRXqp/
+# IfrwXByWM+43ky5aZHCwhYQliEmOTNrRORGvfzruf/XAueV5ObTuC/0WM66adEgk
+# qLFX4T6bvBtoxPwHH7IzlyNbeM1nzmYETRkqlfTewzPq9rQ8IS29ygpeZs5b8ZBz
+# lSoP/38SoYBLfeN7OOsD6snC9jlgijbMCsCpbwZ9IMAwdlmI+jiH8hYbR4R6D5Mz
+# BCtlfQSn9voaecwWAlaKl8E=
+# SIG # End signature block
