@@ -150,7 +150,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "3"
+[int]$versionNumber = "4"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2859,7 +2859,7 @@ param
             # Standard
             $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.com"
             $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.com"
-        }Elseif($PortalURL -like "*.privilegecloud.cyberark.cloud*"){
+        }Elseif($PortalURL -like "*.cyberark.cloud*"){
             # ispss
             $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.cloud"
             $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.cloud"
@@ -3503,8 +3503,8 @@ Pause
 # SIG # Begin signature block
 # MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAFU7rhPtJjCBq2
-# HJz3dujl8PvJzzC7IsqVAXZDY15msaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBF4EIpWkSKGBDB
+# btnYOrgYS1K2O8h8q8o0Vp4QiO/KIqCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3585,23 +3585,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCj
-# Vl4eP7xPBPTiA4/OUlEsT3XIA9KwMpibjRXeHtIGzDANBgkqhkiG9w0BAQEFAASC
-# AgBrcb5mPDNSouAZbPL6xoL3xiFdEtIkaYUSHfn0UNFrxB639CFormoHWar9RnC/
-# vervo4uZzt0oWBYuIYSa9aWCXHT1gdejT67B9kglfoGDznUNVzDuj4DmKUx+2jc8
-# EhBl9g75bq29adC4xjNdSYHW5E64ZEYEE0DjaXqzQz5SM07pmfAbz9W9XqenJIDK
-# HohNlBSKPg+iTGziC2VzQqNl7gjx2iwgqiOxNIRihitXeTnCTJODX/D8bVvmvu3b
-# gKO8pE1BD8D7ZzXLF97T1mIsd3Rwv4rFXrxEBuAaGacHTX7cTwbzQacPoRRKHPmI
-# Q755XN2xpvhQ0fnCAX7L5XvDeH/8mMUe2Z/taA0mCKWbkKz4Wrd1Y3VGLXmHp3B8
-# gea3Jevisen5E0i0IQ3v8owEBpY2PCn08rQcLkDz2c/mPzkUtgKYTdOx1szRwo5A
-# KUFoOL9yzJwi4c3GjAE5sdD/62kYrK+h71D6bzWsMjaFs6QH6xCJL8OWikTBGiJO
-# Ym+9aEJxsn7OYGbM2TDnD/bJD97Ch1fqdSOuw53jhxLo7j/p8RHwuTles0zJamQH
-# 8/we1GDtt0Ku7LKkKLB04HjNHXygKGLFt2rvQj7IcOEKvmNTRgb+aPBo0zr/ZWEd
-# 0DDFGFcz9brp7JUcCQFwdXmlOvz9Qk9aeMStfzmSMdqvyqGCDiswgg4nBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDR
+# 53RrBT3tgGjgljmBZMc1WEZ7CaUrCHCe5lvbWhRnRjANBgkqhkiG9w0BAQEFAASC
+# AgAaWwT/1OngkX2vilBtYAs271VUnm+agiOMiektum4nNux5Vo9WD7OIKUyVQw/d
+# KHqAxacn8E1gICUWvXh4shPufpDp6xf2wWcx4uiJnwQhcqEzc2tZAJMWSGH8cgfK
+# DIadnmcx+fZ8GycxDXn5aT+kIbXQzuSwwajj9SYmVTZ+sQs5MjkaHd66uwqwt3Yn
+# o1OPk+GTb2fVkE4l0XNt0Hs9/ktqiJpyxcEiE2jKDyQp6Ifc7XPNdHwr5UKQpshd
+# 7UvNuhdft5ejBrqYm1Rw7r2dXuwEaiVEbtPum/ebj494EvtEJoucTsvK8Rabsv48
+# 0B8XP4ny+P171Tl5uaDXVturDGYzzFjoLmnwUlBXj0OfasWACpS5UsWsg7ysidAs
+# XuAumIPDdyGUFLqJNa2mhZTpSVXd9c4B90QAGSzUSjk8njPCHOSK7FKhwIq209Bl
+# q57UUpJ45Gi3nmMQkd7y52p0UKJm0R8GEpevYThaPAl1dLsHoPRa1Qg1GToOSocc
+# ezJKbTfxuzB4Rm+dbiQOoocRgYtWoRa5UfZ+fNU3M5qGJDF0gzcee8z3hpC0kTN5
+# xK8RuCex6AhPnDVuPr1iDDaa6D9DauOaX7pXmbmKt+4SeUxQzfO26RwRfp2R1/Wu
+# X46dZjfBlw0SJ6aCOZDMIJz66t/pd/Zziby4uRD6V25HpqGCDiswgg4nBgorBgEE
 # AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBTcb4izhXnm07iRaVZQVBv0gjJtHQIUa4ujMI/NrNg+7rC9pGDR
-# vAOPhRYYDzIwMjIxMTE1MTQyNzMwWjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# BgUrDgMCGgUABBRDra770iP5nKON2FGoAP+IsTeSuwIUPwzUWzB6VjWdlAqWvyFH
+# 6dyM39QYDzIwMjIxMTE2MDA1ODIzWjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
 # UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
 # dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
 # U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
@@ -3665,13 +3665,13 @@ Pause
 # HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
 # dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
 # YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjIxMTE1MTQyNzMwWjAvBgkqhkiG9w0BCQQxIgQgHR2vVPfeWV4I
-# R/dDJSk6mggiVdaNjLOLnSVYDx3gH7QwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# 9w0BCQUxDxcNMjIxMTE2MDA1ODIzWjAvBgkqhkiG9w0BCQQxIgQg9W9mZdfSU5hy
+# n93bnxvk1d+HE9QB/1Kw/dzvoQlW9FMwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
 # xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# ABBCz8UouDOdED8ds2HjUE4KmTcK4DS7vteR/D6Xh69VCcrzUzr4Tz62sVoyVyrg
-# P49VpTLVB0fLK2fpOLNVsawP9RokKlwMn9n+RXxAj7gnjGrylgpAUXjMkPXRXqp/
-# IfrwXByWM+43ky5aZHCwhYQliEmOTNrRORGvfzruf/XAueV5ObTuC/0WM66adEgk
-# qLFX4T6bvBtoxPwHH7IzlyNbeM1nzmYETRkqlfTewzPq9rQ8IS29ygpeZs5b8ZBz
-# lSoP/38SoYBLfeN7OOsD6snC9jlgijbMCsCpbwZ9IMAwdlmI+jiH8hYbR4R6D5Mz
-# BCtlfQSn9voaecwWAlaKl8E=
+# ABASkNVYGojcE811I75znogi57KEcu+RTxkc7El4tjBIH2ha+K8LQRTCWSJONZrk
+# iD2FelK2TBjx9dcLKqJSmlSxCIJzop7EutZN3t6Q6slzHrcySijnb8u9g+68e/Hj
+# Zr8by5o/Uxfa1gIZKYhsmkRlQY6g95okqHtZbdzRv0Zv8etNv5pNNweOoxICJIOo
+# x3Aly3ilucWTmTBHbciiY7THnL9PYwtvlklW3vS5mWB3+nZ3QhnNRkkOj2cBbzJp
+# oSXvnHoYelmsyTlvc3BiK6c4bNZ/o5y/Xjrb90LNzFASz8pOt5jF+IY/zJLnR2Rq
+# BXrXHIPD7Ehz36Opyz7W2OA=
 # SIG # End signature block
