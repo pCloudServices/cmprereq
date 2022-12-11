@@ -56,7 +56,9 @@ param(
     [Parameter(ParameterSetName='regular',Mandatory=$false)]
     [switch]$SkipIPCheck,
     [Parameter(ParameterSetName='regular',Mandatory=$false)]
-    [switch]$DisableNLA
+    [switch]$DisableNLA,
+    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [switch]$InstallRDS
 )
 
 # ------ SET Script Prerequisites ------
@@ -112,6 +114,14 @@ $arrCheckPrerequisitesCPM = @(
 "CRLConnectivity" #CPM
 )
 
+# TBA next version
+$arrCheckIdentityPrerequisites = @(
+"IdentityIdaptiveApp", #Identity
+"IdentityTruste", #Identity
+"IdentityVerisign", #Identity
+"IdentityGlobalSign" #Identity
+)
+
 
 ## If not OutOfDomain then include domain related checks
 If (-not $OutOfDomain){
@@ -122,7 +132,7 @@ If ($POC){
 	$arrCheckPrerequisitesGeneral += $arrCheckPrerequisitesPOC
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel}
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel}#,@{IdentityISPSS = $arrCheckIdentityPrerequisites}
 
 
 ## List of GPOs to check
@@ -150,7 +160,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "4"
+[int]$versionNumber = "6"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -168,7 +178,7 @@ $global:g_CryptoPath = "C:\ProgramData\Microsoft\Crypto"
 $global:TriggerAtStart = New-ScheduledTaskTrigger -AtStartup
 $global:TriggerAtLogon = New-ScheduledTaskTrigger -AtLogon
 $global:ActionNLA = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-DisableNLA`""
-$global:ActionRDS = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`""
+$global:ActionRDS = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-InstallRDS`""
 $global:taskNameNLA = "DisableNLAafterRDSInstall"
 $global:taskNameRDS = "CompleteRDSInstallAfterRestart"
 $global:taskDescrNLA = "DisableNLAafterRDSInstall"
@@ -186,200 +196,15 @@ Function Show-Menu{
     Clear-Host
     Write-Host "================ Troubleshooting Guide ================"
     
-    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
-    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
-    Write-Host "3: Press '3' to Retrieve DC Info" -ForegroundColor Green
-    Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
-    Write-Host "5: Press '5' to Enable WinRM HTTPS Listener" -ForegroundColor Green
-    Write-Host "6: Press '6' to Config WinRMListener Permissions" -ForegroundColor Green
-    Write-Host "7: Press '7' to Enable SecondaryLogon Service" -ForegroundColor Green
-    Write-Host "8: Press '8' to Run CPM Install Connection Test" -ForegroundColor Green
+    Write-Host "1: Press '1' to Disable IPv6" -ForegroundColor Green
+    Write-Host "2: Press '2' to Enable SecondaryLogon Service" -ForegroundColor Green
+    Write-Host "3: Press '3' to Run CPM Install Connection Test" -ForegroundColor Green
+    Write-Host "4: Press '4' to Retry Install RDS" -ForegroundColor Green
+    Write-Host "4: Press '5' to Verify InstallerUser status" -ForegroundColor Green
     Write-Host "Q: Press 'Q' to quit."
 }
 Function Troubleshooting{
-Function Connect-LDAPS(){
-    [CmdletBinding()]
-    param(
-        [parameter(Mandatory=$false)][string] $hostname = (Read-Host -Prompt "Enter Hostname (eg; cyberarkdemo.com)"),
-        [parameter(Mandatory=$false)][int] $Port = (Read-Host -Prompt "Enter Port($("636"))"),
-        [parameter(Mandatory=$false)][string] $username = (Read-Host -Prompt "Enter Username (eg; svc_cyberark)")
-    )
-    
-#$username = Read-Host "Bind Account Username (eg; svc_cyberark)"
-#$hostname = Read-Host "DC server (eg; cyberarkdemo.com)"
-#$Port = Read-Host "Port (eg; 636, 3269)"
 
-if ($Port -eq 0){$port = 636}
-
-$Null = [System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices.Protocols")
-#Connects to LDAP
-$LDAPConnect = New-Object System.DirectoryServices.Protocols.LdapConnection $HostName`:$Port
-
-#Set session options (SSL + LDAP V3)
-$LDAPConnect.SessionOptions.SecureSocketLayer = $true
-$LDAPConnect.SessionOptions.ProtocolVersion = 3
-
-# Pick Authentication type:
-# Anonymous, Basic, Digest, DPA (Distributed Password Authentication),
-# External, Kerberos, Msn, Negotiate, Ntlm, Sicily
-$LDAPConnect.AuthType = [System.DirectoryServices.Protocols.AuthType]::Basic
-
-# Gets username and password.
-$credentials = new-object "System.Net.NetworkCredential" -ArgumentList $UserName,(Read-Host "Password" -AsSecureString)
-# Bind with the network credentials. Depending on the type of server,
-# the username will take different forms.
-Try {
-$ErrorActionPreference = 'Stop'
-$LDAPConnect.Bind($credentials)
-$ErrorActionPreference = 'Continue'
-}
-Catch {
-Throw "Error binding to ldap  - $($_.Exception.Message)"
-}
-
-
-Write-LogMessage -Type Verbose -Msg "Successfully bound to LDAP!"
-$basedn = "DC=cyberarkdemo,DC=com" # TODO: Get current domain name of the machine or request domain name
-$scope = [System.DirectoryServices.Protocols.SearchScope]::Base
-#Null returns all available attributes
-$attrlist = $null
-$filter = "(objectClass=*)"
-
-$ModelQuery = New-Object System.DirectoryServices.Protocols.SearchRequest -ArgumentList $basedn,$filter,$scope,$attrlist
-
-#$ModelRequest is a System.DirectoryServices.Protocols.SearchResponse
-Try {
-$ErrorActionPreference = 'Stop'
-$ModelRequest = $LDAPConnect.SendRequest($ModelQuery) 
-$ErrorActionPreference = 'Continue'
-}
-Catch {
-Throw "Problem looking up model account - $($_.Exception.Message)"
-}
-
-$ModelRequest
-}
-Function EnableTLS1(){
-	$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
-	$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
-	ForEach ($tlsPath in @($TLS1ClientPath, $TLS1ServerPath))
-	{
-		If(-not (Test-Path $tlsPath))
-		{
-			New-Item -Path $tlsPath -Force 
-		}
-		New-ItemProperty -Path $tlsPath -Name "Enabled" -Value "1" -PropertyType DWORD -Force
-		if ((Get-ItemProperty $tlsPath).Enabled -eq 1)
-		{
-			Write-LogMessage -Type Success -Msg "Added $tlsPath\Enabled"
-		}Else{
-			Write-LogMessage -Type Warning -Msg "Couldn't add $tlsPath\Enabled"
-		}
-		New-ItemProperty -Path $tlsPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
-		if ((Get-ItemProperty $tlsPath).DisabledByDefault -eq 0)
-		{
-			Write-LogMessage -Type Success -Msg "Added $tlsPath\DisabledByDefault"
-		}Else{
-			Write-LogMessage -Type Warning -Msg "Couldn't add $tlsPath\DisabledByDefault"
-		}
-	}
-	
-	Write-LogMessage -Type Success -Msg "Enabled TLS1.0!"
-}
-Function GetListofDCsAndTestBindAccount(){
-$UserPrincipal = Get-UserPrincipal
-if($UserPrincipal.ContextType -eq "Domain"){
-
-function listControllers
-{
-$dclist = ""
-$Domain = [DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().name
-$dclist = netdom query /D:$Domain dc | Select-Object -SkipLast 2 | Select-Object -Skip 2 | ForEach-Object {"$_.$domain"}
-return $dclist
-}
-
-function Test-LDAPPorts {
-    [CmdletBinding()]
-    param(
-        [string] $ServerName,
-        [int] $Port
-    )
-
-        Remove-Item "$PSScriptRoot\DCInfo.txt" -Force -ErrorAction SilentlyContinue
-
-        try {
-            $LDAP = "LDAP://" + $ServerName + ':' + $Port
-            $Connection = [ADSI]($LDAP)
-            $Connection.Close()
-            return $true
-        } catch {
-            if ($_.Exception.ToString() -match "The server is not operational") {
-                Write-Warning "Can't open $ServerName`:$Port."
-            } elseif ($_.Exception.ToString() -match "The user name or password is incorrect") {
-                Write-Warning "Current user ($Env:USERNAME) doesn't seem to have access to to LDAP on port $Server`:$Port"
-            } else {
-                Write-Warning -Message $_
-            }
-        }
-        return $False
-    }
-
-Function Test-LDAP {
-    [CmdletBinding()]
-    param (
-        [alias('Server', 'IpAddress')][Parameter(Mandatory = $False)][string[]]$ComputerName,
-        [int] $GCPortLDAP = 3268,
-        [int] $GCPortLDAPSSL = 3269,
-        [int] $PortLDAP = 389,
-        [int] $PortLDAPS = 636
-    )
-
-        if (!$ComputerName){
-    $ComputerName = listControllers
-    }
-
-    # Checks for ServerName - Makes sure to convert IPAddress to DNS
-    foreach ($Computer in $ComputerName) {
-        [Array] $ADServerFQDN = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue)
-        if ($ADServerFQDN) {
-            if ($ADServerFQDN.NameHost) {
-                $ServerName = $ADServerFQDN[0].NameHost
-            } else {
-                [Array] $ADServerFQDN = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue)
-                $FilterName = $ADServerFQDN | Where-Object { $_.QueryType -eq 'A' }
-                $ServerName = $FilterName[0].Name
-            }
-        } else {
-            $ServerName = ''
-        }
-        $GlobalCatalogSSL = Test-LDAPPorts -ServerName $ServerName -Port $GCPortLDAPSSL -WarningAction SilentlyContinue
-        $GlobalCatalogNonSSL = Test-LDAPPorts -ServerName $ServerName -Port $GCPortLDAP -WarningAction SilentlyContinue
-        $ConnectionLDAPS = Test-LDAPPorts -ServerName $ServerName -Port $PortLDAPS -WarningAction SilentlyContinue
-        $ConnectionLDAP = Test-LDAPPorts -ServerName $ServerName -Port $PortLDAP -WarningAction SilentlyContinue
-
-        #if Variable holds $true then print it's port out and sort it in a table.
-        $PortsThatWork = @(
-            if ($GlobalCatalogNonSSL) { $GCPortLDAP }
-            if ($GlobalCatalogSSL) { $GCPortLDAPSSL }
-            if ($ConnectionLDAP) { $PortLDAP }
-            if ($ConnectionLDAPS) { $PortLDAPS }
-        ) | Sort-Object
-        [pscustomobject]@{
-            DomainController    = $Computer
-            #ComputerFQDN       = $ServerName
-            GlobalCatalogLDAP  = $GlobalCatalogNonSSL
-            GlobalCatalogLDAPS = $GlobalCatalogSSL
-            LDAP               = $ConnectionLDAP
-            LDAPS              = $ConnectionLDAPS
-            AvailablePorts     = $PortsThatWork -join ','
-        }
-    }
-}
-Write-Host -ForegroundColor Cyan "Outputting DC Info on screen, this will also be stored in local file `"DCInfo.txt`"."
-Write-Host -ForegroundColor Cyan "This might take awhile depending on your network configuration."
-Test-LDAP |format-table| Tee-Object -file "$PSScriptRoot\DCInfo.txt"
-}Else{Write-Host "Must be logged in as domain member."}
-}
 Function DisableIPV6(){
     #Disable IPv6 on NIC
 	Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6
@@ -389,169 +214,7 @@ Function DisableIPV6(){
 
     Write-LogMessage -Type Success -Msg "Disabled IPv6, Restart machine to take affect."
 }
-Function EnableWinRMListener(){
-Function Show-MenuWinRM{
-    Clear-Host
-    Write-Host "================ Configure WinRM ================"
-    
-    Write-Host "1: Press '1' to Unbind existing Cert (to start fresh)" -ForegroundColor Magenta
-    Write-Host "2: Press '2' to Generate new Self-Signed Cert" -ForegroundColor Magenta
-    Write-Host "3: Press '3' to Configure WinRM Listener with new Cert" -ForegroundColor Magenta
-    Write-Host "4: Press '4' to Add Inbound FW Rule (WinRM HTTPS 5986)" -ForegroundColor Magenta
-    Write-Host "5: Press '5' to Add Permissions" -ForegroundColor Magenta
-    Write-Host "6: Press '6' to Run all steps (1-5) [Recommended]" -ForegroundColor Magenta 
-    Write-Host "Q: Press 'Q' to quit."
-}
-Function RemoveCert(){
-Write-Host "Unbinding existing cert from WinRM HTTPS listener..." -ForegroundColor Cyan
-Try{
-Remove-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"}
-}
-Catch{}
-Write-Host "Done!" -ForegroundColor Green
-}
 
-
-Function Add-newCert(){
-Try{
-#Generate new CERT
-Write-Host "Generating new self signed certificate, only do this once!" -ForegroundColor Cyan
-Write-Host "If you want to repeat this action, please manually delete the cert first to avoid clutter." -ForegroundColor Cyan
-$newCert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
-$global:newCert = $newCert
-Write-Host "Done!" -ForegroundColor Green
-}
-Catch
-{
-"Error: $(Collect-ExceptionMessage $_.Exception)"
-}
-}
-Function ConfigWinRMList(){
-#Configure WinRM Listener with the new Cert
-Try{
-Write-Host "Configuring WinRM with HTTPS Listener, you can check later by typing 'Winrm e winrm/config/listener'" -ForegroundColor Cyan
-New-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"} -ValueSet @{Hostname="$env:COMPUTERNAME";CertificateThumbprint=$newCert.Thumbprint} > $null 2>&1
-Set-WSManInstance -ResourceURI winrm/config/service -ValueSet @{CertificateThumbprint=$newCert.Thumbprint} > $null 2>&1 #set the cert on the service level aswell.
-Set-Item WSMan:\localhost\Client\TrustedHosts -Value * -Force #Allow TrustedHosts
-
-#Check if HTTP 5985 is missing and add it aswell (in case user accidently deleted it, its required since RD Connection broker uses HTTP when adding role).
-Try{
-Get-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTP'; Address="*"} > $null 2>&1
-}
-Catch [System.Management.Automation.RuntimeException]
-{
-if (($_.Exception.Message) -like "*The service cannot find the resource identified*"){
-New-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTP'; Address="*"}
-}
-}
-Write-Host "Done!" -ForegroundColor Green
-Write-Host @"
-Some Useful Commands:
-
-[To delete the HTTPS Listener manually]:
-winrm delete winrm/config/Listener?Address=*+Transport=HTTPS
-
-[To Check the configuration manually]:
-Winrm e winrm/config/listener
-and
-Winrm get winrm/config
-
-[To perform manual connect]:
-Connect-WSMan -ComputerName <ComputerIPHere>
-
-"@ -ForegroundColor Green
-}
-Catch
-{
-#"Error: $(Collect-ExceptionMessage $_.Exception)"
-"Error: $($_.Exception)"
-}
-}
-Function Add-FWWinRMHTTPS(){
-#Add FW Rule
-Try{
-Write-Host "Adding local FW inbound rule, port 5986" -ForegroundColor Cyan
-netsh advfirewall firewall add rule name="Windows Remote Management (HTTPS-In)" dir=in action=allow protocol=TCP localport=5986
-Write-Host "Done!" -ForegroundColor Green
-}
-Catch
-{
-"Error: $(Collect-ExceptionMessage $_.Exception)"
-}
-}
-
-do
- {
-     Show-MenuWinRM
-     $selection = Read-Host "Please select an option"
-     switch($selection)
-     {
-         '1' {
-              RemoveCert
-             }
-         '2' {
-              Add-newCert
-             }
-         '3' {
-              ConfigWinRMList
-             }
-         '4' {
-              Add-FWWinRMHTTPS
-             }
-         '5' {
-              WinRMListenerPermissions
-             }
-         '6' {
-              RemoveCert
-              Add-newCert
-              ConfigWinRMList
-              Add-FWWinRMHTTPS
-              WinRMListenerPermissions
-              }
-     }
-     pause
- }
- until ($selection -eq 'q')
- break
-}
-Function WinRMListenerPermissions(){
-Write-Host "Will attempt to add 'NETWORK SERVICE' user read permission for the WinRM HTTPS Certificate"
-$winrmListen = Get-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{address="*";Transport="HTTPS"} -ErrorAction Stop
-
-#Get Cert permissions
-$getWinRMCertThumb = Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Thumbprint -eq ($winrmListen.CertificateThumbprint)}
-$rsaCert = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($getWinRMCertThumb)
-$filename = $rsaCert.key.uniquename
-
-if (Test-Path -Path "$g_CryptoPath\Keys\$filename"){
-$certkeypath = "$g_CryptoPath\Keys\$filename"}
-Else{
-$certkeypath = "$g_CryptoPath\RSA\MachineKeys\$filename"
-}
-
-
-$certPermissions =  Get-Acl -Path $certkeypath
-
-#Set Cert permissions
-$newRule = New-Object Security.accesscontrol.filesystemaccessrule "NETWORK SERVICE", "read", allow
-$certPermissions.AddAccessRule($newRule)
-Set-Acl -Path $certkeypath -AclObject $certPermissions
-$certPermissions =  Get-Acl -Path $certkeypath
-
-If ($certPermissions.Access.IdentityReference -contains "NT AUTHORITY\NETWORK SERVICE"){
-Write-Host ""
-Write-Host "Success!" -ForegroundColor Green
-Write-Host "Review the changes:" -ForegroundColor Green
-Write-Host $certPermissions.Access.IdentityReference -Separator `n
-Write-Host ""
-}
-Else{
-Write-Host "Something went wrong, You'll have to do it manually :(" -ForegroundColor Red
-Write-Host "Launch MMC -> Certificates -> Find the cert WinRM is using -> Right Click -> All Tasks -> Manage Private Keys -> Grant 'NETWORK SERVICE' read permissions"
-}
-
-
-}
 Function EnableSecondaryLogon(){
 
 $GetSecondaryLogonService = Get-Service -Name seclogon
@@ -578,6 +241,80 @@ $CPMConnectionTest = $true
 CPMConnectionTest
 }
 
+Function TestIdentityServiceAccount(){
+Write-LogMessage -type Info -MSG "Begin TestIdentityServiceAccount." -Early
+Write-Host "This check will perform a basic API authentication call and will return success or fail" -ForegroundColor Magenta
+pause
+
+#Fetch values from .ini file
+Write-LogMessage -type Info -MSG "Checking if we can fetch the portal URL from $CONFIG_PARAMETERS_FILE" -Early
+$parameters = Try{Import-CliXML -Path $CONFIG_PARAMETERS_FILE}catch{Write-LogMessage -type Info -MSG "$($_.exception.message)" -Early}
+
+if($parameters.PortalURL -eq $null){
+    $PlatformTenantId = Read-Host "Please enter your portal URL (eg; 'https://testenv.cyberark.cloud')"
+}
+Else{
+    $PlatformTenantId = $parameters.PortalURL
+}
+
+# grab the subdomain, depending how the user entered the url (hostname only or URL).
+if($PlatformTenantId -match "https://"){
+    $PlatformTenantId = ([System.Uri]$PlatformTenantId).host
+    $portalSubDomainURL = $PlatformTenantId.Split(".")[0]
+}
+Else{
+    $portalSubDomainURL = $PlatformTenantId.Split(".")[0]
+}
+Try{
+
+    #PlatformParams
+    $BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
+    Write-LogMessage -type Info -MSG "Portal URL set: $BasePlatformURL" -Early
+    #Platform Identity API
+    $IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    $IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
+    
+    $IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
+    Write-LogMessage -type Info -MSG "Identity URL set: $IdaptiveBasePlatformURL" -Early
+    $IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
+    $startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
+    $startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
+    $LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
+    $creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+    
+    #Begin Start Authentication Process
+    Write-LogMessage -type Info -MSG "Begin Start Authentication Process" -Early
+    $startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
+    $IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30
+    $IdaptiveResponse.Result.Challenges.mechanisms
+    
+    #Begin Advanced Authentication Process
+    Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process" -Early
+    $startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+    $AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
+    $AnswerToResponse.Result
+
+    if($AnswerToResponse.Result.Summary -eq "LoginSuccess"){
+        Write-Host "Success!" -ForegroundColor Green
+        #LogOff
+        Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
+        $logoff = Invoke-RestMethod -Uri $LogoffPlatform -Method Post -Headers $IdentityHeaders
+    }Else{
+        Write-Host "Failed!" -ForegroundColor Red
+            if($IdaptiveResponse.Result.Challenges.mechanisms.AnswerType.Count -gt 1){
+                Write-LogMessage -type Info -MSG "Challenge mechanisms greater than one:" -Early
+                $IdaptiveResponse.Result.Challenges.mechanisms.AnswerType
+                Write-LogMessage -type Warning -MSG "Hint: Looks like MFA is enabled, make sure it's disabled."
+            }
+        }
+}catch
+{
+    Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+}
+
+Write-LogMessage -type Info -MSG "Finish TestIdentityServiceAccount." -Early
+}
+
 do
  {
      Show-Menu
@@ -585,29 +322,20 @@ do
      switch ($selection)
      {
          '1' {
-              Connect-LDAPS
-             }
-         '2' {
-              EnableTLS1
-             }
-         '3' {
-              GetListofDCsAndTestBindAccount
-             }
-         '4' {
               DisableIPV6
              }
-         '5' {
-              EnableWinRMListener
-             }
-         '6' {
-              WinRMListenerPermissions
-             }
-         '7' {
+         '2' {
               EnableSecondaryLogon
              }
-         '8' {
+         '3' {
               CPMConnectionTestFromTroubleshooting
-             }  
+             }
+         '4' {
+              InstallRDS
+             }
+         '5' {
+             TestIdentityServiceAccount
+             }
      }
      pause
  }
@@ -1861,6 +1589,51 @@ Function CustomerPortalConnectivity
 }
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: IdentityGlobalSign
+# Description....: CRL connectivity
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function IdentityGlobalSign
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting IdentityGlobalSign..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+
+        $globalsignURLs = @("ocsp.globalsign.com","crl.globalsign.com","secure.globalsign.com")
+        
+        foreach($globalsignurl in $globalsignURLs)
+        {
+            $cert = 0
+            $cert = Invoke-WebRequest -Uri $globalsignurl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | Select-Object -ExpandProperty StatusCode
+            If($cert -eq 200)
+            {
+                $actual = "200"
+            	$result = $true
+            }Else{
+                $actual = $cert
+                #$errorMsg = "Could not verify connectivity, Check DNS/FW. Error: $(Collect-ExceptionMessage $_.Exception.Message)"
+            }
+        }
+
+		Write-LogMessage -Type Verbose -Msg "Finished IdentityGlobalSign"
+	} catch {
+		$errorMsg = "Could not verify connectivity, Check DNS/FW. Error: $(Collect-ExceptionMessage $_.Exception.Message)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = "200";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: Processors
 # Description....: Minimum required CPU cores
 # Parameters.....: None
@@ -2337,6 +2110,7 @@ function NewSessionDeployment([string]$ConnectionBroker, [string]$SessionHost)
 
 function NewSessionCollection([string]$CollectionName, [string]$SessionHost, [string]$ConnectionBroker)
 {
+    Write-LogMessage -type Info -MSG "Creating RDS collection called $CollectionName" -Early
     New-RDSessionCollection -CollectionName $CollectionName -SessionHost ("$SessionHost") -ConnectionBroker ("$ConnectionBroker") -WarningAction SilentlyContinue
 }
 
@@ -2358,7 +2132,7 @@ function IsLoginWithDomainUser()
 
 function RemoveValueFromRegistry([string]$key, [string]$name)
 {
-    Write-LogMessage -Type Info -Msg "Removing the registry value '$key$name'"
+    Write-LogMessage -Type Info -Msg "Removing the registry value '$key$name'" -Early
 	Try 
 	{
 		# if registry path does not exists, there is no need to remove it.
@@ -2387,9 +2161,136 @@ function RemoveValueFromRegistry([string]$key, [string]$name)
 	 Write-LogMessage -Type Info -Msg "Registry value '$key$name' does not exist"
 }
 
+function Add-CAUserRight{
+    [CmdletBinding()] 
+	param(
+   [parameter(Mandatory=$true)]
+   [ValidateNotNullOrEmpty()]$userName,
+   [parameter(Mandatory=$true)]
+   [ValidateNotNullOrEmpty()]$userRight
+    )
+    	Process {
+        Try{
+            Write-LogMessage -type info -MSG "Start adding ""$userRight"" user rights to user $userName" -Early
+            Try {
+                $ntprincipal = new-object System.Security.Principal.NTAccount "$userName"
+                $userSid = $ntprincipal.Translate([System.Security.Principal.SecurityIdentifier])
+                $userSidstr = $userSid.Value.ToString()
+            } Catch {
+                $userSidstr = $null
+            }
+            
+            if( [string]::IsNullOrEmpty($userSidstr) ) {
+                Write-LogMessage -type info -MSG "User $userName not found!" "Error"
+                return $false
+            }
 
-			import-module RemoteDesktop;
-			import-module RemoteDesktop -Verbose:$false | Out-Null;
+            Write-LogMessage -type info -MSG "User SID: $($userSidstr)" -Early
+
+            $tempPath = [System.IO.Path]::GetTempPath()
+            $importPath = Join-Path -Path $tempPath -ChildPath "import.inf"
+            if(Test-Path $importPath) { Remove-Item -Path $importPath -Force }
+            $exportPath = Join-Path -Path $tempPath -ChildPath "export.inf"
+            if(Test-Path $exportPath) { Remove-Item -Path $exportPath -Force }
+            $secedtPath = Join-Path -Path $tempPath -ChildPath "secedt.sdb"
+            if(Test-Path $secedtPath) { Remove-Item -Path $secedtPath -Force }
+  
+            Write-LogMessage -type info -MSG "Export current Local Security Policy to file $exportPath" -Early
+            secedit.exe /export /cfg "$exportPath" > $null
+
+            #if $userRight does not exist - add it 
+            $val = Select-String $exportPath -Pattern "$userRight"
+            if ($null -eq $val)
+            {
+$importFileContentTemplate = @"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Privilege Rights]
+$userRight = $userName
+"@
+
+                Write-LogMessage -type info -MSG "Import new settings to Local Security Policy from file $importPath" -Early
+                $importFileContentTemplate | Set-Content -Path $importPath -Encoding Unicode -Force > $null
+
+                secedit.exe /configure /db "$secedtPath" /cfg "$importPath" /areas USER_RIGHTS > $null
+                      
+                Remove-Item -Path $importPath -Force
+                Remove-Item -Path $exportPath -Force
+                Remove-Item -Path $secedtPath -Force
+
+                Write-LogMessage -type info -MSG "Finished adding ""$userRight"" user rights to user $userName"
+                return $true
+            }
+            else
+            {
+	            $currentRightKeyValue = (Select-String $exportPath -Pattern "$userRight").Line
+
+	            $splitedKeyValue = $currentRightKeyValue.split("=",[System.StringSplitOptions]::RemoveEmptyEntries)
+                $currentSidsValue  = $splitedKeyValue[1].Trim()
+
+	            $newSidsValue = ""
+						
+	            if( $currentSidsValue -notlike "*$($userSidstr)*" ) {
+		            Write-LogMessage -type info -MSG "Modify ""$userRight"" settings" -Early
+			
+		            if( [string]::IsNullOrEmpty($currentSidsValue) ) {
+			            $newSidsValue = "*$($userSidstr)"
+		            } else {
+			            $newSidsValue = "*$($userSidstr),$($currentSidsValue)"
+		            }
+		
+$importFileContentTemplate = @"
+[Unicode]
+Unicode=yes
+[Version]
+signature="`$CHICAGO`$"
+Revision=1
+[Privilege Rights]
+$userRight = $newSidsValue
+"@
+
+                    Write-LogMessage -type info -MSG "Import new settings to Local Security Policy from file $importPath" -Early
+                    $importFileContentTemplate | Set-Content -Path $importPath -Encoding Unicode -Force > $null
+
+                    secedit.exe /configure /db "$secedtPath" /cfg "$importPath" /areas USER_RIGHTS > $null
+
+	                } else {
+		                Write-LogMessage -type info -MSG "NO ACTIONS REQUIRED! User $userName already in ""$userRight""" -Early
+	                }
+                      
+                    if(Test-Path $importPath) { Remove-Item -Path $importPath -Force }
+                    if(Test-Path $exportPath) { Remove-Item -Path $exportPath -Force }
+                    if(Test-Path $secedtPath) { Remove-Item -Path $secedtPath -Force }
+
+	                Write-LogMessage -type info -MSG "Finished adding ""$userRight"" user rights to user $userName" -Early
+	                return $true
+               }
+			
+		}Catch{
+         Write-LogMessage -type Error -MSG "Failed to add  ""$userRight"" user right for user $userName." "Error $_.Exception.Message"
+		}
+      return $false
+	}
+	End{
+   }
+}
+
+
+function AddNetworkLogonRight()
+{
+	$addUserRight = Add-CAUserRight "NETWORK SERVICE" "SeNetworkLogonRight"
+	if ($addUserRight -eq $false)
+	{
+		throw "Failed to add netwotk logon right for to NETWORK SERVICE user. Connection Broker will not be installed."
+	}
+}
+
+# can be removed later versions
+import-module RemoteDesktop;
+import-module RemoteDesktop -Verbose:$false | Out-Null;
 
 
 # @FUNCTION@ ======================================================================================================================
@@ -2405,7 +2306,7 @@ $script:RedirectClipboardValue = "fDisableClip"
 $script:RedirectDrivesValue	= "fDisableCdm"
 
     # Get the details of the Remote Desktop Services rule
-    Write-LogMessage -Type Info -Msg "Checking to see if we need to deploy RDS Roles" -Early
+    Write-LogMessage -Type Info -Msg "Deploying RDS Roles" -Early
     try {
 		$RDSFeature = Get-WindowsFeature *Remote-Desktop-Services*
 
@@ -2425,7 +2326,7 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                 # Set Schedule Task to resume RDS install after user logs back in
                 SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
 
-		    	Write-LogMessage -type Warning -MSG "The server will restart to apply Microsoft Remote Desktop Services, press ENTER to continue"
+		    	Write-LogMessage -type Warning -MSG "The server will restart to apply Microsoft Remote Desktop Services, press ENTER to continue."
 		    	Pause
                 Restart-Computer -Force
 		    }
@@ -2443,11 +2344,28 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 				    # if the computer is in a domain and the user is local, display relevant message
 				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
 				    {
-				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and return to the prerequisite stage." -Early
+				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag." -Early
 				    }
 			    }
+                # add network logon rights, used in case its missing or if CPM was installed first and hardened the machine.
+                AddNetworkLogonRight
+
 			    # Get the details of the Connection Broker rule
 			    $ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
+
+                # Restart if Broker state is pending restart
+                if ($ConnectionBrokerFeature.installState -eq "UninstallPending")
+                {
+                    
+                    $ConnectionBrokerFeature
+                    Write-LogMessage -type Warning -MSG "`n 1. We detected Connection Broker was recently uninstalled, to complete operation, you must restart first."
+                    Write-LogMessage -type Warning -MSG " 2. Script will automatically resume after restart, press ENTER to continue."
+                    # Set Schedule Task to resume RDS install after user logs back in
+                    $AdminUserName = whoami
+                    SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+                    pause
+                    Restart-Computer -Force
+                }
 
 			    # Check if the Connection broker rule is not installed
 			    if ($ConnectionBrokerFeature.Installed -eq $false)
@@ -2458,7 +2376,7 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                         RemoveValueFromRegistry $TerminalServicesKey $RedirectClipboardValue
                         RemoveValueFromRegistry $TerminalServicesKey $RedirectDrivesValue
                         
-                        Write-LogMessage -type info -MSG "Installing RDS-Connection-Broker rule" -Early
+                        Write-LogMessage -type info -MSG "Installing RDS-Connection-Broker role" -Early
 
                         # Check if logged in user domain matches the machine domain, in cases where Primary DNS suffix is set, it will be different.
                         if($(Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Services\tcpip\Parameters | select -ExpandProperty Domain) -eq $env:userdnsdomain)
@@ -2472,14 +2390,14 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                         # Installing Remote Desktop Broker - Session Host
                         NewSessionDeployment ($cb) ($cb)
                         
-                        # Configure the RDS Collection
+                        # Configure the RDS Collection - remoteapp
                         NewSessionCollection ($CollectionName) ($cb) ($cb)
                         		 				 
                         Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
                     }
 			        catch
 			        {
-					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker rule"
+					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role"
 			        }
                 }
 			    else
@@ -2585,6 +2503,33 @@ function Disable-NLA()
 
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: checkIfPSMisRequired
+# Description....: Check if PSM will be installed on the machine, depending on answer, we will deploy RDS role.
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+function checkIfPSMisRequired()
+{
+    #Check if RDS is installed, 
+    $RDSdeployed = (Get-WindowsFeature Remote-Desktop-Services).InstallState -eq "Installed"
+
+    if($RDSdeployed -ne $true)
+    {
+        $decisionPSM = Get-Choice -Title "Deploy RDS? (Required for Privileged Session Management)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
+        if ($decisionPSM -eq "Yes (Recommended)")
+        {
+            Write-LogMessage -type Info -MSG "Selected YES to install RDS." -Early
+            InstallRDS
+        }
+        Else
+        {
+            Write-LogMessage -type Info -MSG "Selected NOT to install RDS, skipping RDS role install..." -Early
+        }
+    }
+}
+
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: Get-Choice
 # Description....: Prompts user for Selection choice
 # Parameters.....: None
@@ -2670,42 +2615,40 @@ Function Get-Choice{
 # Return Values..: stdout txt file
 # =================================================================================================================================
 Function CPMConnectionTest(){
-
 #Static
 $VaultOperationFolder = "$PSScriptRoot\VaultOperationsTester"
 $stdoutFile = "$VaultOperationFolder\Log\stdout.log"
 $LOG_FILE_PATH_CasosArchive = "$VaultOperationFolder\Log\old"
 $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
 
-        #If script ran for the first time, we perform this check and mark it down, afterwards we will skip this, and it can be ran from -Troubleshooting or with A Switch.
-        $parameters = Try{Import-CliXML -Path $CONFIG_PARAMETERS_FILE}catch{Write-LogMessage -type Info -MSG "$($_.exception.message)" -Early}
+    #Fetch values from .ini file
+    $parameters = Try{Import-CliXML -Path $CONFIG_PARAMETERS_FILE}catch{Write-LogMessage -type Info -MSG "$($_.exception.message)" -Early}
     
-        #If $parameters is empty, the initial script was never run or errored out, thus we skip straight to the test without the introduction.
-        if($parameters){
-            if (-not($parameters.contains("FirstCPMConnectionTest"))){ #if doesn't contain the value, then we delete existing file and create new 
-            Remove-Item -Path $CONFIG_PARAMETERS_FILE
-            $parameters += @{FirstCPMConnectionTest = $True}
-            $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
+    if($parameters){
+        if (-not($parameters.contains("CPMConnectionTestPassed")))
+        # if entry is not found, we proceed with test
+        { 
             Write-LogMessage -type Info -MSG "** Since Vault Connectivity test passed, let's also run CPM Connection Install Test **"
             Write-LogMessage -type Info -MSG "** You will need to provide your Privilege Cloud Install Username and Password. **"
             #Ask if User wants to perform the test, subsequent runs won't show this question, you can only trigger this from Troubleshooting or -Switch.
             $decisionCPM = Get-Choice -Title "Run CPM Install Connection test?" -Options "Yes (Recommended)", "No" -DefaultChoice 1
-                if ($decisionCPM -eq "No")
-                {
-                    Write-LogMessage -type Warning -MSG "OK, if you change your mind, you can always rerun the script with -CPMConnectionTest flag (or -Troubleshooting and selecting from menu)."
-                    Pause
-                    Exit
-                }
-            }
-            ElseIf($CPMConnectionTest){
-                #RunTheCheck
-            }
-            Else{
-                #Since it's not the first script run, we skip this function.
-                Break
+            if ($decisionCPM -eq "No")
+            {
+                Write-LogMessage -type Warning -MSG "OK, if you change your mind, you can always rerun the script with -CPMConnectionTest flag (or -Troubleshooting and selecting from menu)."
+                Pause
+                Exit
             }
         }
- 
+        ElseIf($CPMConnectionTest)
+        {
+            #RunTheCheck
+        }
+        Else
+        {
+            Break
+        }
+
+    }
  #Prereqs   
  if(!(Test-Path -Path "$VaultOperationFolder\VaultOperationsTester.exe")){
      Write-LogMessage -Type Error -Msg "Required folder doesn't exist: `"$VaultOperationFolder`". Make sure you get the latest version and extract it correctly from zip. Rerun the script with -CPMConnectionTest flag."
@@ -2741,8 +2684,8 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             $VaultIP = $parameters.VaultIP
         }
         #Get Credentials
-        Write-LogMessage -type Info -MSG "Enter Privilege Cloud Install User Credentials"
-        $creds = Get-Credential -Message "Enter Privilege Cloud Install User Credentials"
+        Write-LogMessage -type Info -MSG "Enter Privilege Cloud InstallerUser Credentials"
+        $creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
         #Check pw doesn't contain illegal char, otherwise installation will fail
         [string]$illegalchars = '\/<>{}''&"$*@`|'
         $pwerror = $null
@@ -2803,6 +2746,12 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             Else{
                 $stdout | Write-Host -ForegroundColor DarkGray
                 Write-LogMessage -type Success -MSG "Connection is OK!"
+                Write-LogMessage -type Success -MSG "If you want to rerun this check in the future, run the script with -CPMConnectionTest or -Troubleshooting."
+
+            # Add entry to ini file that this test passed and skip it from now on.
+            Remove-Item -Path $CONFIG_PARAMETERS_FILE
+            $parameters += @{CPMConnectionTestPassed = $True}
+            $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
             }
 }
 
@@ -3072,7 +3021,6 @@ Function Test-VersionUpdate()
 	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
-	#Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
 	Write-LogMessage -Type Info -Msg "Checking for new version" -Early
 	$checkVersion = ""
 	$webVersion = New-Object System.Net.WebClient
@@ -3354,16 +3302,16 @@ $t = @"
 
 for ($i=0;$i -lt $t.length;$i++) {
 if ($i%2) {
- $c = "yellow"
+ $c = "green"
 }
 elseif ($i%5) {
- $c = "magenta"
+ $c = "black"
 }
 elseif ($i%7) {
- $c = "red"
+ $c = "gray"
 }
 else {
-   $c = "yellow"
+   $c = "green"
 }
 write-host $t[$i] -NoNewline -ForegroundColor $c
 }
@@ -3381,7 +3329,7 @@ if($psISE -ne $null){
     Exit
 }
 
-$Host.UI.RawUI.WindowTitle = "Privilege Cloud Prerequisites Check"
+$Host.UI.RawUI.WindowTitle = "Privilege Cloud Connector Management Prerequisites Check"
 
 #Cleanup log file if it gets too big
 if (Test-Path $LOG_FILE_PATH)
@@ -3422,6 +3370,16 @@ else
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
     try {
+        # Disable NLA after RDS deployment and machine restart
+        if($DisableNLA){Disable-NLA}
+        
+        # Resume RDS from Scheduled Task or if called with a flag on script exec
+        if($InstallRDS){
+            InstallRDS
+            Pause
+            Return
+        }
+
 		if(Test-Path $CONFIG_PARAMETERS_FILE)
 		{
 			Write-LogMessage -type Info -MSG "Getting parameters from config file '$CONFIG_PARAMETERS_FILE'" -Early
@@ -3479,14 +3437,11 @@ else
 		Write-LogMessage -Type Error -Msg "Failed to retrieve public IP - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 	try {
-        # Disable NLA after RDS deployment
-        if($DisableNLA){Disable-NLA}
-
         # Main Pre-requisites check
 		CheckPrerequisites
-        
-        # Install RDS
-        InstallRDS
+
+        # Install RDS on the Initial Run
+        checkIfPSMisRequired
 
         # If VaultConnectivity passed, run CPM Test.
         if($VaultConnectivityOK -eq $true){CPMConnectionTest}
@@ -3503,8 +3458,8 @@ Pause
 # SIG # Begin signature block
 # MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBF4EIpWkSKGBDB
-# btnYOrgYS1K2O8h8q8o0Vp4QiO/KIqCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCChgppqdneRg3hp
+# 29kFcG2Vo/ByPzBNJxDB6/V9fUnaOqCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3585,23 +3540,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDR
-# 53RrBT3tgGjgljmBZMc1WEZ7CaUrCHCe5lvbWhRnRjANBgkqhkiG9w0BAQEFAASC
-# AgAaWwT/1OngkX2vilBtYAs271VUnm+agiOMiektum4nNux5Vo9WD7OIKUyVQw/d
-# KHqAxacn8E1gICUWvXh4shPufpDp6xf2wWcx4uiJnwQhcqEzc2tZAJMWSGH8cgfK
-# DIadnmcx+fZ8GycxDXn5aT+kIbXQzuSwwajj9SYmVTZ+sQs5MjkaHd66uwqwt3Yn
-# o1OPk+GTb2fVkE4l0XNt0Hs9/ktqiJpyxcEiE2jKDyQp6Ifc7XPNdHwr5UKQpshd
-# 7UvNuhdft5ejBrqYm1Rw7r2dXuwEaiVEbtPum/ebj494EvtEJoucTsvK8Rabsv48
-# 0B8XP4ny+P171Tl5uaDXVturDGYzzFjoLmnwUlBXj0OfasWACpS5UsWsg7ysidAs
-# XuAumIPDdyGUFLqJNa2mhZTpSVXd9c4B90QAGSzUSjk8njPCHOSK7FKhwIq209Bl
-# q57UUpJ45Gi3nmMQkd7y52p0UKJm0R8GEpevYThaPAl1dLsHoPRa1Qg1GToOSocc
-# ezJKbTfxuzB4Rm+dbiQOoocRgYtWoRa5UfZ+fNU3M5qGJDF0gzcee8z3hpC0kTN5
-# xK8RuCex6AhPnDVuPr1iDDaa6D9DauOaX7pXmbmKt+4SeUxQzfO26RwRfp2R1/Wu
-# X46dZjfBlw0SJ6aCOZDMIJz66t/pd/Zziby4uRD6V25HpqGCDiswgg4nBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDa
+# s/5B8dD48X1psRv/QuigrFJ2YiquyEvMBB7hbPHFyjANBgkqhkiG9w0BAQEFAASC
+# AgC/KIwAGexnQDptNn9pGd9gJBvd8jnAWUn/QssX4hjnr+sMfrhzMO+VBxr4UMwN
+# +s7uJ778rfXQkY00IOUwj5WbevsUzZt3SKs+SuAIRoiwWDKpyN9Yd+MgGYaBIglZ
+# JkGP9h1Q3TjV+zER7qj4MTU6Vh6JkpNOpLx+kwuzcUPC673XZBFCChk5FyFCYsni
+# Dz+P6Nxysxqe3s5pYsQppR9eTCkron4UilmFBmE4ijqdrPmyrqBc7U+3zVyKtb5G
+# lMV/WLPs4q0Po8wqs0IgjvPZdqH7aT+7zeNf0jIiZkhEUznPHiCX4jno+Wz+3iG0
+# +q7qUtC5eFVxatngDnGoWl5XRGMXMT9ec49FXwWVQf7NN0dNCLYEDL0GKFdtUxs+
+# eXGplRfxVhirwkKqwBVgLMH0LPnUKYY2GT68bKLjZQ0UZnFKY4IFtlJ/WqHcFkyp
+# 9podv5dwiVBLByfp34+VdsV7heqFzS12OCudNkUD9FIqL9SONsNpUhR36RA3Jo5t
+# fjqnzYbw8ySMiLnvSjrIUwNpPHAfs8khEV2Q9b0n9OhvGCvveZY8ovaizFvnpBu5
+# EEyZ2/aebYqRaNjM1PiLBh/oLqASvXAGEs4qJzr+kIO3H2v8RvOycxXILD/ExOD3
+# KnY7h+iHOhGqE9gTd7ZeQmsWalyawDOLk2GN4nB+bKNN76GCDiswgg4nBgorBgEE
 # AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBRDra770iP5nKON2FGoAP+IsTeSuwIUPwzUWzB6VjWdlAqWvyFH
-# 6dyM39QYDzIwMjIxMTE2MDA1ODIzWjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# BgUrDgMCGgUABBRPX1o+rTcyz+AmiKK05aDWYfvWmwIUFKEDQNVsElMY9bwQpz64
+# obZri+EYDzIwMjIxMjExMTYxMDU4WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
 # UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
 # dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
 # U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
@@ -3665,13 +3620,13 @@ Pause
 # HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
 # dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
 # YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjIxMTE2MDA1ODIzWjAvBgkqhkiG9w0BCQQxIgQg9W9mZdfSU5hy
-# n93bnxvk1d+HE9QB/1Kw/dzvoQlW9FMwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# 9w0BCQUxDxcNMjIxMjExMTYxMDU4WjAvBgkqhkiG9w0BCQQxIgQgTincDq4OoHaH
+# yjoAaWM28yyeV6Rl7Q0X1e0nr2vA/3MwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
 # xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# ABASkNVYGojcE811I75znogi57KEcu+RTxkc7El4tjBIH2ha+K8LQRTCWSJONZrk
-# iD2FelK2TBjx9dcLKqJSmlSxCIJzop7EutZN3t6Q6slzHrcySijnb8u9g+68e/Hj
-# Zr8by5o/Uxfa1gIZKYhsmkRlQY6g95okqHtZbdzRv0Zv8etNv5pNNweOoxICJIOo
-# x3Aly3ilucWTmTBHbciiY7THnL9PYwtvlklW3vS5mWB3+nZ3QhnNRkkOj2cBbzJp
-# oSXvnHoYelmsyTlvc3BiK6c4bNZ/o5y/Xjrb90LNzFASz8pOt5jF+IY/zJLnR2Rq
-# BXrXHIPD7Ehz36Opyz7W2OA=
+# ACeAXocpiG1KOb79FRwQ/KElYMEq8LohHehimftAgsDL2Oo5N+QdUTiptGakyH0L
+# p1KqdeVnaMfe8eWMYAMqN8loNEgMhOOTP6Qm+a5ybz4xLPBgFot0JxyiABj0FuxL
+# CIEDrC5B6oZ++qd12CBDhir1b0crPpsD1NP7FMyGkg+xXFVX9dgPQfr3fg3cazil
+# gSJ1cYQmwzmmT5yXWEO8LTZ3mv5TtaWs+4VFRp3CLojUPZOsVxEJ4ZcwauFCrwy3
+# QkScO4WXJXIcIl3BQzOCIAey3PE3SjTEj9A7pqCWVBWtS+spVino48eN5poBQMkJ
+# e0Dashfz8V78sbSnSVBT+b0=
 # SIG # End signature block
