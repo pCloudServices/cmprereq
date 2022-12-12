@@ -160,7 +160,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "6"
+[int]$versionNumber = "7"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2158,7 +2158,7 @@ function RemoveValueFromRegistry([string]$key, [string]$name)
         Write-LogMessage -Type error -Msg "Failed to remove registry key: '$key$name'"
         return $false
 	}
-	 Write-LogMessage -Type Info -Msg "Registry value '$key$name' does not exist"
+	 Write-LogMessage -Type Info -Msg "Registry value '$key$name' does not exist" -Early
 }
 
 function Add-CAUserRight{
@@ -2392,6 +2392,9 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                         
                         # Configure the RDS Collection - remoteapp
                         NewSessionCollection ($CollectionName) ($cb) ($cb)
+
+                        #disable NLA just in case it comes back.
+                        Disable-NLA
                         		 				 
                         Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
                     }
@@ -3458,8 +3461,8 @@ Pause
 # SIG # Begin signature block
 # MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCChgppqdneRg3hp
-# 29kFcG2Vo/ByPzBNJxDB6/V9fUnaOqCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDLay6bB2rLtjCE
+# 82skmQv7luMVZFPNuYa/C3Z6np90hqCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3540,23 +3543,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDa
-# s/5B8dD48X1psRv/QuigrFJ2YiquyEvMBB7hbPHFyjANBgkqhkiG9w0BAQEFAASC
-# AgC/KIwAGexnQDptNn9pGd9gJBvd8jnAWUn/QssX4hjnr+sMfrhzMO+VBxr4UMwN
-# +s7uJ778rfXQkY00IOUwj5WbevsUzZt3SKs+SuAIRoiwWDKpyN9Yd+MgGYaBIglZ
-# JkGP9h1Q3TjV+zER7qj4MTU6Vh6JkpNOpLx+kwuzcUPC673XZBFCChk5FyFCYsni
-# Dz+P6Nxysxqe3s5pYsQppR9eTCkron4UilmFBmE4ijqdrPmyrqBc7U+3zVyKtb5G
-# lMV/WLPs4q0Po8wqs0IgjvPZdqH7aT+7zeNf0jIiZkhEUznPHiCX4jno+Wz+3iG0
-# +q7qUtC5eFVxatngDnGoWl5XRGMXMT9ec49FXwWVQf7NN0dNCLYEDL0GKFdtUxs+
-# eXGplRfxVhirwkKqwBVgLMH0LPnUKYY2GT68bKLjZQ0UZnFKY4IFtlJ/WqHcFkyp
-# 9podv5dwiVBLByfp34+VdsV7heqFzS12OCudNkUD9FIqL9SONsNpUhR36RA3Jo5t
-# fjqnzYbw8ySMiLnvSjrIUwNpPHAfs8khEV2Q9b0n9OhvGCvveZY8ovaizFvnpBu5
-# EEyZ2/aebYqRaNjM1PiLBh/oLqASvXAGEs4qJzr+kIO3H2v8RvOycxXILD/ExOD3
-# KnY7h+iHOhGqE9gTd7ZeQmsWalyawDOLk2GN4nB+bKNN76GCDiswgg4nBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBY
+# hBlzL1RvkT/Ms7DZrbV3NC8OvMihEHzwoh3WsUwngTANBgkqhkiG9w0BAQEFAASC
+# AgAeS2oyk4Mlhjn5yC+gZOKktZTfrOKSrTcsgFNhGcTCtaKL7id/EqOp90AyfwBs
+# zCFcEJsKQ2FNEdqi6Ras8j2uX1/L6//tu6fiA5ofqOjp8P+mn4+sRjrq2tZzfD4E
+# RYzYWApP/K6YhMKAUqVFPYxyPGPkAvCdHENUCOlrWIkb3q03o3yxIoAFYmc7c7SB
+# x+THlvQ9pIG+dy0rSPCM8eOdD8cTKtNTDrh3IR8jGvxYVn/tjhKAg8RnFYCmlMJ1
+# Wch/pXTHdtOYENvcBcZ0W0uCCn8DgsJAfA6DyWh73oVo1RoEbWX1+DJYqQ984iSc
+# qme788MgQ7wisdYC0+Vjs1/1ME+tWPyUoiEQhnEoVBmaMCHID3ufwsFJyrVipP9j
+# DoiBCGaBfy8Hzdh8D+3EgZZhges42iu0ccfJfOzF5PTXQsAq0+3sZBHCiHkaAwkO
+# Ats/BMSnz8Eajw/hkxVgwALQU6X9VdMIiAZF//sawdSDC7qFnp5PdjLA6ZW6mpNM
+# S7NR88OZKB+MjlLlJe0b1KeJUI6dEruZ4sqpafpZ3F7oUbzVOMTRqlwGt3etKtP/
+# z7IwwYD/8Pld/vNn/llHnL5QrgTrdya7AMMNyJ9BLL0z02xh2TP93sjhQKqj80mH
+# QYVCx8fHJjjwU8/mNi57A0dQazwjCeT+PSQerOiT96oplqGCDiswgg4nBgorBgEE
 # AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBRPX1o+rTcyz+AmiKK05aDWYfvWmwIUFKEDQNVsElMY9bwQpz64
-# obZri+EYDzIwMjIxMjExMTYxMDU4WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# BgUrDgMCGgUABBTHRNRFJ2/3RebbPWTsm7GCcR5S3wIURpyQtV+k5cuVq/I/225d
+# 0+XOqIEYDzIwMjIxMjEyMDkxNDQ2WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
 # UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
 # dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
 # U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
@@ -3620,13 +3623,13 @@ Pause
 # HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
 # dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
 # YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjIxMjExMTYxMDU4WjAvBgkqhkiG9w0BCQQxIgQgTincDq4OoHaH
-# yjoAaWM28yyeV6Rl7Q0X1e0nr2vA/3MwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# 9w0BCQUxDxcNMjIxMjEyMDkxNDQ2WjAvBgkqhkiG9w0BCQQxIgQg/UqZn/pIeKnb
+# YZB8gbQrDJF3kf0to9r8pVGa27r1zqswNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
 # xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# ACeAXocpiG1KOb79FRwQ/KElYMEq8LohHehimftAgsDL2Oo5N+QdUTiptGakyH0L
-# p1KqdeVnaMfe8eWMYAMqN8loNEgMhOOTP6Qm+a5ybz4xLPBgFot0JxyiABj0FuxL
-# CIEDrC5B6oZ++qd12CBDhir1b0crPpsD1NP7FMyGkg+xXFVX9dgPQfr3fg3cazil
-# gSJ1cYQmwzmmT5yXWEO8LTZ3mv5TtaWs+4VFRp3CLojUPZOsVxEJ4ZcwauFCrwy3
-# QkScO4WXJXIcIl3BQzOCIAey3PE3SjTEj9A7pqCWVBWtS+spVino48eN5poBQMkJ
-# e0Dashfz8V78sbSnSVBT+b0=
+# AGZFILgjYpH3s3zpY3f1Ke3GvzRQqqYnJmjXa9NZGxD5gZ/3bZDyf1Tr4QjWBu3H
+# PT3Q6Y0ZFk5wyFbzLIKmqn4Xx/1LygNJZpod9A6eKKl1txePUZEWyhdg8eSGYVVc
+# HjEyhlsJZBTkmDDYTqlElsoUFd3yOMD1xa33hpfzSfKmZDz1dh2TdqaQ5Ap/KPVU
+# dsf0R97XpN/kPNVU2pxZTV6lMwbMUUvGA6ZAlXSDgNVDzSfu6fO4Unti/ud2uSBF
+# 9auk6ap8MILrWqqjXVG/H4bYBzIpbOA5BQvQICbE2LIA9zD3JwCRNB05IC8jn5oq
+# x5ocZUVGdjh6PoofqK9MzhI=
 # SIG # End signature block
