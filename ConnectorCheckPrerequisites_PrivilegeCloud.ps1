@@ -160,7 +160,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "7"
+[int]$versionNumber = "8"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -242,78 +242,128 @@ CPMConnectionTest
 }
 
 Function TestIdentityServiceAccount(){
-Write-LogMessage -type Info -MSG "Begin TestIdentityServiceAccount." -Early
-Write-Host "This check will perform a basic API authentication call and will return success or fail" -ForegroundColor Magenta
-pause
+	Write-LogMessage -type Info -MSG "Begin TestIdentityServiceAccount." -Early
+	Write-Host "This check will perform a basic API authentication call and will return success or fail" -ForegroundColor Magenta
+	pause
+	
+	#Fetch values from .ini file
+	Write-LogMessage -type Info -MSG "Checking if we can fetch the portal URL from $CONFIG_PARAMETERS_FILE" -Early
+	$parameters = Try{Import-CliXML -Path $CONFIG_PARAMETERS_FILE}catch{Write-LogMessage -type Info -MSG "$($_.exception.message)" -Early}
+	
+	if($parameters.PortalURL -eq $null){
+		$PlatformTenantId = Read-Host "Please enter your portal URL (eg; 'https://testenv.cyberark.cloud')"
+	}
+	Else{
+		$PlatformTenantId = $parameters.PortalURL
+	}
+	
+	# grab the subdomain, depending how the user entered the url (hostname only or URL).
+	if($PlatformTenantId -match "https://"){
+		$PlatformTenantId = ([System.Uri]$PlatformTenantId).host
+		$portalSubDomainURL = $PlatformTenantId.Split(".")[0]
+	}
+	Else{
+		$portalSubDomainURL = $PlatformTenantId.Split(".")[0]
+	}
+	Try{
+	
+		#PlatformParams
+		$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
+		Write-LogMessage -type Info -MSG "Portal URL set: $BasePlatformURL" -Early
+		#Platform Identity API
+		$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue
+		$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
+		
+		$IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
+		Write-LogMessage -type Info -MSG "Identity URL set: $IdaptiveBasePlatformURL" -Early
+		$IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
+		$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
+		$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
+		$LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
+		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		if($($creds.GetNetworkCredential().Password) -match ' '){
+			Write-Host "Your password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
+			Write-Host "Remove it and try again." -ForegroundColor Yellow
+			Pause
+			Exit
+		}
 
-#Fetch values from .ini file
-Write-LogMessage -type Info -MSG "Checking if we can fetch the portal URL from $CONFIG_PARAMETERS_FILE" -Early
-$parameters = Try{Import-CliXML -Path $CONFIG_PARAMETERS_FILE}catch{Write-LogMessage -type Info -MSG "$($_.exception.message)" -Early}
+		#Begin Start Authentication Process
+		Write-LogMessage -type Info -MSG "Begin Start Authentication Process" -Early
+		$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
+		$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30
+		$IdaptiveResponse.Result.Challenges.mechanisms
+		
+		#Begin Advanced Authentication Process
+		Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process" -Early
+		$startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+		$AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
+		$AnswerToResponse.Result
+	
+		if($AnswerToResponse.Result.Summary -eq "LoginSuccess"){
+			Write-Host "Success!" -ForegroundColor Green
+			#LogOff
+			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
+			$logoff = Invoke-RestMethod -Uri $LogoffPlatform -Method Post -Headers $IdentityHeaders
+		}Else{
+			Write-Host "Failed!" -ForegroundColor Red
+				if($IdaptiveResponse.Result.Challenges.mechanisms.AnswerType.Count -gt 1){
+					Write-LogMessage -type Info -MSG "Challenge mechanisms greater than one:" -Early
+					$IdaptiveResponse.Result.Challenges.mechanisms.AnswerType
+					Write-LogMessage -type Warning -MSG "Hint: Looks like MFA is enabled, make sure it's disabled."
+				}
+			}
+	
+	}catch
+	{
+		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+	}
+		#### Check against PVWA Directly, sometimes the shadowuser can be suspended/disabled in the vault but will be fine in identity. ####
 
-if($parameters.PortalURL -eq $null){
-    $PlatformTenantId = Read-Host "Please enter your portal URL (eg; 'https://testenv.cyberark.cloud')"
-}
-Else{
-    $PlatformTenantId = $parameters.PortalURL
-}
+			Write-LogMessage -type Info -MSG "Also testing directly against Privilege Cloud API." -Early
+			Start-Sleep 3
+			$basePVWA = "https://$portalSubDomainURL.privilegecloud.cyberark.cloud"
+			$pvwaLogoff = "$BasePlatformURL/api/passwordvault/Auth/logoff"
+			# Login URL is still Identity base platform on purpose.
+			$basePVWALoginCyberArk = "$BasePlatformURL/api/passwordvault/Auth/CyberArk/Logon"
+			$pvwaLogonBody = @{ username = $creds.UserName; password = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+		# Login to PVWA
+		Try{
+			Write-LogMessage -type Info -MSG "Begin Login: $basePVWALoginCyberArk" -Early
+			$pvwaLogonToken = Invoke-RestMethod -Method Post -Uri $basePVWALoginCyberArk -Body $pvwaLogonBody -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable pvwaResp
+			$pvwaLogonHeader = @{Authorization = $pvwaLogonToken }
+		
+			# Get current logged on user details:
 
-# grab the subdomain, depending how the user entered the url (hostname only or URL).
-if($PlatformTenantId -match "https://"){
-    $PlatformTenantId = ([System.Uri]$PlatformTenantId).host
-    $portalSubDomainURL = $PlatformTenantId.Split(".")[0]
-}
-Else{
-    $portalSubDomainURL = $PlatformTenantId.Split(".")[0]
-}
-Try{
+			$getCurrentUser = Invoke-RestMethod -Uri "$basePVWA/passwordvault/WebServices/PIMServices.svc/User" -Method Get -Headers $pvwaLogonHeader -ContentType "application/json"
+			Write-LogMessage -type Info -MSG "Getting current user details: `"$basePVWA/passwordvault/WebServices/PIMServices.svc/User`"" -Early
+			if(($getCurrentUser.Disabled -eq "True") -or ($getCurrentUser.Suspended -eq "True")){
+				Write-Host "Failed!" -ForegroundColor Red
+				Write-Host "User is Suspended/Disabled in the Vault!" -ForegroundColor Yellow
+				Write-Host "Hint: Perform `"Set Password`" and `"MFA Unlock`" from Identity Portal and try again." -ForegroundColor Yellow
+			}
+			else
+			{
+				$getCurrentUser
+				Write-Host "Success!" -ForegroundColor Green
+			}
 
-    #PlatformParams
-    $BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
-    Write-LogMessage -type Info -MSG "Portal URL set: $BasePlatformURL" -Early
-    #Platform Identity API
-    $IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue
-    $IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
-    
-    $IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
-    Write-LogMessage -type Info -MSG "Identity URL set: $IdaptiveBasePlatformURL" -Early
-    $IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
-    $startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
-    $startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
-    $LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
-    $creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
-    
-    #Begin Start Authentication Process
-    Write-LogMessage -type Info -MSG "Begin Start Authentication Process" -Early
-    $startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
-    $IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30
-    $IdaptiveResponse.Result.Challenges.mechanisms
-    
-    #Begin Advanced Authentication Process
-    Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process" -Early
-    $startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
-    $AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
-    $AnswerToResponse.Result
-
-    if($AnswerToResponse.Result.Summary -eq "LoginSuccess"){
-        Write-Host "Success!" -ForegroundColor Green
-        #LogOff
-        Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
-        $logoff = Invoke-RestMethod -Uri $LogoffPlatform -Method Post -Headers $IdentityHeaders
-    }Else{
-        Write-Host "Failed!" -ForegroundColor Red
-            if($IdaptiveResponse.Result.Challenges.mechanisms.AnswerType.Count -gt 1){
-                Write-LogMessage -type Info -MSG "Challenge mechanisms greater than one:" -Early
-                $IdaptiveResponse.Result.Challenges.mechanisms.AnswerType
-                Write-LogMessage -type Warning -MSG "Hint: Looks like MFA is enabled, make sure it's disabled."
-            }
-        }
-}catch
-{
-    Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
-}
-
-Write-LogMessage -type Info -MSG "Finish TestIdentityServiceAccount." -Early
-}
+			#logoff
+			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
+			$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader
+		}Catch
+		{
+			Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+			#Lets check if identity was ok, then if vault is not, we know the pw is correct but user is most likely suspended/disabled.
+			if(($AnswerToResponse.Result.Summary -eq "LoginSuccess") -and ($pvwaResp -like "*Authentication failure*")){
+				Write-Host "Failed!" -ForegroundColor Red
+				Write-Host "Hint: User is most likely Suspended/Disabled in the Vault" -ForegroundColor Yellow
+				Write-Host "Hint: Perform `"Set Password`" and `"MFA Unlock`" from Identity Portal and try again." -ForegroundColor Yellow
+			}
+		}
+	$creds = $null
+	Write-LogMessage -type Info -MSG "Finish TestIdentityServiceAccount." -Early
+	}
 
 do
  {
@@ -1311,6 +1361,7 @@ Function GPO
 {
 	[OutputType([PsCustomObject])]
 	param ()
+	[int]$script:gpoRDSerrorsfound = 0
 	try{
 		Write-LogMessage -Type Verbose -Msg "Starting GPO..."
 		$actual = ""	
@@ -1324,8 +1375,9 @@ Function GPO
 
 		[xml]$xml = Get-Content $path
 		$RDSGPOs = $xml.Rsop.ComputerResults.ExtensionData.extension.policy | Where-Object { ($_.Category -match "Windows Components") }
-		if($RDSGPOs.Count -gt 0)
+		if($RDSGPOs.Category.Count -gt 0)
 		{
+			[int]$script:gpoRDSerrorsfound = 1
 			ForEach($item in $RDSGPOs)
 			{
 				$skip = $false
@@ -2307,6 +2359,12 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 
     # Get the details of the Remote Desktop Services rule
     Write-LogMessage -Type Info -Msg "Deploying RDS Roles" -Early
+	
+	if($gpoRDSerrorsfound -gt 0){
+		Write-LogMessage -type Warning -MSG "Please fix GPO RDS related errors first."
+		Return
+	}
+	
     try {
 		$RDSFeature = Get-WindowsFeature *Remote-Desktop-Services*
 
@@ -2512,10 +2570,11 @@ function Disable-NLA()
 # =================================================================================================================================
 function checkIfPSMisRequired()
 {
-    #Check if RDS is installed, 
-    $RDSdeployed = (Get-WindowsFeature Remote-Desktop-Services).InstallState -eq "Installed"
+    #Check if RDS/CB installed, 
+    $RDSFeature = Get-WindowsFeature *Remote-Desktop-Services*
+	$ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
 
-    if($RDSdeployed -ne $true)
+    if(($RDSFeature.Installed -eq $false) -or ($ConnectionBrokerFeature.Installed -eq $false))
     {
         $decisionPSM = Get-Choice -Title "Deploy RDS? (Required for Privileged Session Management)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
         if ($decisionPSM -eq "Yes (Recommended)")
@@ -3357,7 +3416,7 @@ If ($adminUser -eq $False)
 }
     #troubleshooting section
 if ($Troubleshooting){Troubleshooting}
-    #Run CPM Install Test
+    #Run CPM Install Test with direct flag
 if ($CPMConnectionTest){CPMConnectionTest}
 else
 {
@@ -3461,10 +3520,10 @@ Pause
 ###########################################################################################	
 #endregion
 # SIG # Begin signature block
-# MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCrrIxqvp8sj6bZ
-# nK76jElYAV/NToshNskQhOnFn5ZdVKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAEdYkhah7y74Fb
+# YgPp7mh85+EBiNpb4P0K9Xn19dyjIKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3541,97 +3600,97 @@ Pause
 # l418MFn4EPQUqxB51SMihIcyqu6+3qOlco8Dsy1y0gC0Hcx+unDZPsN8k+rhueN2
 # HXrPkAJ2bsEJd7adPy423FKbA7bRCOc6dWOFH1OGANfEG0Rjw9RfcsI84OkKpQ7R
 # XldpKIcWuaYMlfYzsl+P8dJru+KgA8Vh7GTVb5USzFGeMyOMtyr1/L2bIyRVSiLL
-# 8goMl4DTDOWeMYIRRTCCEUECAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
+# 8goMl4DTDOWeMYIRRDCCEUACAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAy
-# F0GRX/QTwqSd0mcJ2zgE1Qd2peiJjzAsrsJGGcjD3jANBgkqhkiG9w0BAQEFAASC
-# AgACeZZBxIekFbUftjH4hTlPL1rBK94xZrTZDUN/eIsSPe5xAXvlEEvyY/uvwTvL
-# sDA/VsEwxtD9Y3NxwvOGxx3t2EkxzJbZB762zhfcW7SSzU9w6nEo8DvucsSVgDIS
-# +ych2Bz6Ornm8BFsEbAn6NU/Ylpc4jimjubbm/NxTSoXO7IxHfHvQ4Kr/munmbtx
-# w7lG++Jv7W05ID4/CaMeQZP2dWpRLh2IKjck7FCw56kJxoREd+KN8lAVoghlmbMH
-# lx9CxaGCztrimgO9f9zfvj12YCKdR1PqwytoAEcIXK1INIvE6yMVIY0QLyxpqSqq
-# +wPOGi2inHlNHpYYL7uVOkrUGwl0ahBdHvGEG9ZIApuoMhdIHfj+5e+7Kg2Ca+Se
-# 8aG9IqPCnMbzbxrfVdbk7spJYgNPxUIK8qGjhKd/9pBl1BeXMzlpy6FtYy7YetYr
-# fKPmtQQ0G6KI06TJYwUcaww7T9pCzyBsmfVD0qnyQGMRZ4glCagu4g6iBKKz5WQU
-# 3ouzdqdOlCfAZbgmnXM3B6BP+59qNPO6wsUJzuZ8gtC9ZmWwKD5lQP7ATZ6vVipd
-# BdmMdAzbbbt7Vtu47oEwTXwxScFnyuQYJz9dpkEf3DB7X0T6r7G8SuhRUtIdqf7F
-# rbJhe55LVTEQ0yR17IRZjWr7Dq0/nBd6u9HSO28oi4nYg6GCDiwwgg4oBgorBgEE
-# AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
-# BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBRTELxhUhXTdDnuEBWY+lk0kpjszQIVANqxv4nJDfaRQaTZ5bmz
-# 8crjVYgAGA8yMDIyMTIxMjEzMDE1OFowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
-# VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
-# bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
-# ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
-# 98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAwgb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQK
-# Ew5WZXJpU2lnbiwgSW5jLjEfMB0GA1UECxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29y
-# azE6MDgGA1UECxMxKGMpIDIwMDggVmVyaVNpZ24sIEluYy4gLSBGb3IgYXV0aG9y
-# aXplZCB1c2Ugb25seTE4MDYGA1UEAxMvVmVyaVNpZ24gVW5pdmVyc2FsIFJvb3Qg
-# Q2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMTYwMTEyMDAwMDAwWhcNMzEwMTEx
-# MjM1OTU5WjB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9y
-# YXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMT
-# H1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEB
-# AQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+djHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAy
-# l2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4Yht+66YH4t5/Xm1AONSRBudBfHkcy8ut
-# G7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9ITh
-# xNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+
-# vJJXcnf0zajM/gn1kze+lYhqxdz0sUvUzugJkV+1hHk1inisGTKPI8EyQRtZDqk+
-# scz51ivvt9jk1R1tETqS9pPJnONI7rtTDtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAO
-# BgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsG
-# C2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20v
-# Y3BzMCUGCCsGAQUFBwICMBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMC4GCCsG
-# AQUFBwEBBCIwIDAeBggrBgEFBQcwAYYSaHR0cDovL3Muc3ltY2QuY29tMDYGA1Ud
-# HwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5j
-# cmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMT
-# EFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0OBBYEFK9j1sqjToVy4Ke8QfMpojh/gHVi
-# MB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUA
-# A4IBAQB16rAt1TQZXDJF/g7h1E+meMFv1+rd3E/zociBiPenjxXmQCmt5l30otlW
-# ZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQ
-# Y0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NXQZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72
-# a433Snq+8839A9fZ9gOoD+NT9wp17MZ1LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnj
-# OgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g/idtFDL8P5dA4b+ZidvkORS92uTTw+or
-# WrOVWFUEfcea7CMDjYUq0v+uqWGBMIIFSzCCBDOgAwIBAgIQe9Tlr7rMBz+hASME
-# IkFNEjANBgkqhkiG9w0BAQsFADB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3lt
-# YW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdv
-# cmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcN
-# MTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAb
-# BgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBU
-# cnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1w
-# aW5nIFNpZ25lciAtIEczMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA
-# rw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQnP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/
-# J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRokKPgbclE9yAmIJgg6+fpDI3VHcAyzX1uP
-# CB1ySFdlTa8CPED39N0yOJM/5Sym81kjy4DeE035EMmqChhsVWFX0fECLMS1q/Js
-# I9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS41dsIr9Vf2/KBqs/SrcidmXs7DbylpWB
-# Jiz9u5iqATjTryVAmwlT8ClXhVhe6oVIQSGH5d600yaye0BTWHmOUjEGTZQDRcTO
-# PAPstwDyOiLFtG/l77CKmwIDAQABo4IBxzCCAcMwDAYDVR0TAQH/BAIwADBmBgNV
-# HSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5z
-# eW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBzOi8vZC5zeW1jYi5jb20v
-# cnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMu
-# Y29tL3NoYTI1Ni10c3MtY2EuY3JsMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4G
-# A1UdDwEB/wQEAwIHgDB3BggrBgEFBQcBAQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6
-# Ly90cy1vY3NwLndzLnN5bWFudGVjLmNvbTA7BggrBgEFBQcwAoYvaHR0cDovL3Rz
-# LWFpYS53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEw
-# H6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamf
-# hcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQYMBaAFK9j1sqjToVy4Ke8QfMpojh/gHVi
-# MA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/wuKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5
-# Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s702K/SpQV5oLbilRt/yj+Z89xP+YzCdmi
-# WRD0Hkr+Zcze1GvjUil1AEorpczLm+ipTfe0F1mSQcO3P4bm9sB/RDxGXBda46Q7
-# 1Wkm1SF94YBnfmKst04uFZrlnCOvWxHqcalB+Q15OKmhDc+0sdo+mnrHIsV0zd9H
-# CYbE/JElshuW6YUI6N3qdGBuYKVWeg3IRFjc5vlIFJ7lv94AvXexmBRyFCTfxxEs
-# HwA/w0sUxmcczB4Go5BfXFSLPuMzW4IPxbeGAk5xn+lmRT92MYICWjCCAlYCAQEw
-# gYswdzELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9u
-# MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
-# bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
-# CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIyMTIxMjEzMDE1OFowLwYJKoZIhvcNAQkEMSIEIFA/1K9I/L19
-# L+YwbX9OiygTtQh/67fKuLI3eqnIbJ6RMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
-# IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQBO2UuTDmNr6RJ/HyaGe6cEH/z3KfEpZ3ZKfSdtu9sS15+ktY+2haA5lLCkLpvs
-# VMohfTTsnpBb5r6jr23/HFw8X15qr9Ooe+aPgx5cFzy0EuXebFIr5XAyv2i6rY/6
-# sLRazVu5vo6rPvkkhjEoB2L67HRm3w8s1y6cejaFIhtiJXHPbDg8QXJ7/q/L4inD
-# UzGO0ZqhPlvF9J6MJev04hiviFDmyz6FLjwD+L9rUJOAIeoErs8OZ7GV6cyF10Az
-# 249xmoUtwOyMrgC9Pdue2KRC0vC4iN5e6J0wa2cL9lYIH9Iv3BRs5M3PT301DrQ9
-# kf4NECT/S6W8LFx+AmIgGsSm
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCB+
+# KK6G18x0+iFxXw1c21Te6oGcLrtzNG6M01HNOnk/izANBgkqhkiG9w0BAQEFAASC
+# AgCHl7LuSJBSxhoGWgPhQQP06YOPJSDaPao3QgKaO1pM6qVlRyvZurSi52ae8o1y
+# BUpyqqlNj7am6nfpV0vCXEtwQuVHRFKyQlwNohwYb/re2J0X7Fa70JzhO8jPNDIV
+# gwrp7FxbO7A7EEqXFpg9MhNFHFJZwfLbiI8qNjEpOrLs9a8PNxLJ60YYVqgsP54V
+# PfwgmuMeG/WkzqQNUNUoV7LCz5eJ+0AJcjvpJMlPvly4NwA9evg9SwckAdGzT1lj
+# DhEQdNSg7O0yjfQ/4BIK5WHRaDNm4dwifTHGsyP5nou8K5HPAVSI0kAOWvpj+1pC
+# SQtcTyr6u6i12KVgIdqrQgVWscwm2oFE4C9gqwbqUjY3dlMJfb7G4EjggMxcAUP2
+# vBfHmlYaAoM/kf+k9RwXnaj+X5OZ4Z0eAFqfCV5oBaWdCw7rOe5z3PysZ1oReEbp
+# rqmpD9n4kMl/qIhD4XoplBNnlWbVN98ohBZzl/8gYu17RWueIvdRHaFL2Ys8QUis
+# 9cV2XGqufq0IXuMqEM1eroy/5mbPd7zgduC6cWvUXfn87XkLgh465mADht6RwhjT
+# yMRkj8rfgBwuW3rYgbRmqjKZ7u/h6OytgXcb2K7iTtPgjI/gXYP8s5eYdPYOw5bM
+# 8XTrb+EM3JdVjvg5fnN0KiwQlz9Cypluw5iNa0J0U0KaOKGCDiswgg4nBgorBgEE
+# AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
+# BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
+# BgUrDgMCGgUABBS90/Dna5DNNguFVJjZzK+SgnafOwIUa4X9yE1h/uQUTS2KETSw
+# 90mODnoYDzIwMjIxMjI4MTc0NTQ0WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
+# dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
+# U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
+# yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMxFzAVBgNVBAoT
+# DlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVzdCBOZXR3b3Jr
+# MTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZvciBhdXRob3Jp
+# emVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBD
+# ZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEy
+# MzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3Jh
+# dGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMf
+# U3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJKoZIhvcNAQEB
+# BQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawyjwVrhponADKX
+# ak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG50F8eRzLy60b
+# v9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45ncP0mqj0hOHE
+# 0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU1t/HgNuR7v68
+# kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6x
+# zPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4G
+# A1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1UdIARfMF0wWwYL
+# YIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9j
+# cHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYB
+# BQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5jb20wNgYDVR0f
+# BC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNhbC1yb290LmNy
+# bDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQ
+# VGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
+# HwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZIhvcNAQELBQAD
+# ggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZk
+# hHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBj
+# SDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZr
+# jfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv2uybGB+queM6
+# AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6ita
+# s5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWvuswHP6EBIwQi
+# QU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1h
+# bnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29y
+# azEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTAeFw0x
+# NzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsG
+# A1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRy
+# dXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBp
+# bmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCv
+# Doqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQgbTD53R2D6T8n
+# SjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMjdUdwDLNfW48I
+# HXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj
+# 0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEm
+# LP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48
+# A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8EAjAAMGYGA1Ud
+# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
+# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
+# cGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5zeW1hbnRlYy5j
+# b20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYD
+# VR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcwAYYeaHR0cDov
+# L3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9odHRwOi8vdHMt
+# YWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAoBgNVHREEITAf
+# pB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+F
+# zBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
+# DQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZycGMv41UpezlG
+# Tud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZ
+# EPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9EPEZcF1rjpDvV
+# aSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6aescixXTN30cJ
+# hsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GYFHIUJN/HESwf
+# AD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJaMIICVgIBATCB
+# izB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24x
+# HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
+# dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
+# YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
+# 9w0BCQUxDxcNMjIxMjI4MTc0NTQ0WjAvBgkqhkiG9w0BCQQxIgQgMIySRVnQfCrV
+# d6xuGM+R9pWxEB5NCDHZ6pusVsHIV/MwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
+# AKbAcmYQvgeQwcdgIS8oKgrl4oxe1FGrhRllEAU0CD88PoyAbQ0OG8cNzf4+NQGh
+# k9rG5rEDxavuXBOihj29uGC7cEqWmOGOogHveYjng01+XD5z4y4g8krkKmRBVInm
+# x49kG5mQzcC36AoAnp3tyYLXLvJ1iGtwzJyVgNb8qgJAOG65EtKcLdU1H/+TYORc
+# bDPgkhp1+g5l2ec2MekQCvPycmEzz9pm6HrgJFIQcA+Ag4/oVEwG82pKapPNh9cg
+# tpKKQbM5WIyj2q8SSG4aitmbK9R6fvZQ49x/28epDGt9A+hMVW7DHzX0J/vA1cVB
+# 8hD2Dxof6LUEiQCQzPR29MI=
 # SIG # End signature block
