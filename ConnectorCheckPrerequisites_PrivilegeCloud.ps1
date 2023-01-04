@@ -1331,7 +1331,7 @@ Function PendingRestartRDS
 		{
 			Write-LogMessage -Type Warning -Msg "Pending restart detected, restart and run the script again."
 			Pause
-			Return
+			Exit
 		}		
 		else
 		{
