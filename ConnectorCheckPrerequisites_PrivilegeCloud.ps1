@@ -1283,8 +1283,9 @@ Function PendingRestart
 		
 		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or $chkClientUtilities)
 		{
-			$actual = "Pending restart"
-			$result = $False
+			$actual = $true
+			$result = $true
+			$errorMsg = "Pending restart detected, restart and run the script again."
 		}		
 		else
 		{
@@ -1298,9 +1299,9 @@ Function PendingRestart
 	}
 
 	return [PsCustomObject]@{
-		expected = "Not pending restart";
+		expected = $false;
 		actual = $actual;
-		errorMsg = "";
+		errorMsg = $errorMsg;
 		result = $result;
 	}
 }
