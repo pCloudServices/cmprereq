@@ -1270,8 +1270,6 @@ Function PendingRestart
 		Write-LogMessage -Type Verbose -Msg "Starting PendingRestart..."
 		$actual = ""
 		$result = $false
-		$expected = $false
-		$errorMsg = ""
 
 		$regComponentBasedServicing = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | Where-Object { $_.Name -match "RebootPending" })
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
@@ -1286,7 +1284,7 @@ Function PendingRestart
 		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or $chkClientUtilities)
 		{
 			$actual = $true
-			$result = $true
+			$result = $false
 			$errorMsg = "Pending restart detected, restart and run the script again."
 		}		
 		else
