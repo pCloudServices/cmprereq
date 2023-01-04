@@ -1312,7 +1312,7 @@ Function PendingRestart
 # Parameters.....: None
 # Return Values..: Exit
 # =================================================================================================================================
-Function PendingRestart
+Function PendingRestartRDS
 {
 	try{
 		Write-LogMessage -Type info	-Msg "Checking if machine has pending restart..." -early
