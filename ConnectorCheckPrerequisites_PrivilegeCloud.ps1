@@ -1329,7 +1329,7 @@ Function PendingRestartRDS
 		
 		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or $chkClientUtilities)
 		{
-			Write-LogMessage -Type Warnning -Msg "Pending restart detected, restart and run the script again."
+			Write-LogMessage -Type Warning -Msg "Pending restart detected, restart and run the script again."
 			Pause
 			Return
 		}		
