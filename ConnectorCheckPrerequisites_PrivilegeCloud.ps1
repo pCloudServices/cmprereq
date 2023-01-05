@@ -92,6 +92,7 @@ $arrCheckPrerequisitesGeneral = @(
 #"WinRMListener", #General
 #"NoPSCustomProfile", #General
 "PendingRestart", #General
+"CheckNoProxy",
 "GPO" #General + PSM
 )
 
@@ -2206,7 +2207,7 @@ Function CheckNoProxy()
 	}
 }
 
-Function CheckNoProxy()
+Function CheckNoProxyRDS()
 {
 	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
 	if($(netsh winhttp show proxy) -notmatch "Direct access")
@@ -2459,6 +2460,9 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 	
 	# Check if machine has pending restarts.
 	PendingRestartRDS
+	
+	# Check machine has no proxy configuration
+	CheckNoProxyRDS
 	
 	if($gpoRDSerrorsfound -gt 0){
 		Write-LogMessage -type Warning -MSG "Please fix GPO RDS related errors first."
