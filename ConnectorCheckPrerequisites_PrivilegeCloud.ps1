@@ -92,6 +92,7 @@ $arrCheckPrerequisitesGeneral = @(
 #"WinRMListener", #General
 #"NoPSCustomProfile", #General
 "PendingRestart", #General
+"CheckNoProxy",
 "GPO" #General + PSM
 )
 
@@ -1291,6 +1292,7 @@ Function PendingRestart
 		{
 			$actual = $false
 			$result = $True
+			$errorMsg = ""
 		}
 	
 		Write-LogMessage -Type Verbose -Msg "Finished PendingRestart"
@@ -2160,6 +2162,66 @@ Function MachineNameCharLimit()
 	}
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CheckNoProxy
+# Description....: Checks proxy configuration, required direct access for RDS deployment
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function CheckNoProxy()
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting CheckNoProxy..."
+		$actual = ""
+		$result = $False
+		$errorMsg = ""
+        $expected = $false
+
+		$proxyStatus = (netsh winhttp show proxy)
+		
+        
+        #Check if machine name is over 15 chars.
+        if($proxyStatus -match "Direct access"){
+            $result = $true
+		    $errorMsg = ""
+            $actual = $false
+        }
+        Else{
+            $result = $false
+		    $errorMsg = "Please disable proxy for the duration of the installation. run `"netsh winhttp show proxy`""
+			$actual = $true
+        }
+		
+		Write-LogMessage -Type Verbose -Msg "Finished CheckNoProxy"
+	} catch {
+		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $false;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+Function CheckNoProxyRDS()
+{
+	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
+	if($(netsh winhttp show proxy) -notmatch "Direct access")
+	{
+		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`" to disable run `"netsh winhttp reset proxy`""
+		Pause
+		Exit
+	}
+	Else
+	{
+		Write-LogMessage -Type info	-Msg "No proxy configured." -early
+	}
+}
+
 function GetOSVersionInternal()
 {
 Set-Variable OS_VERSION_WINDOWS_2008_R2_PCKG -value 0 -scope script
@@ -2378,7 +2440,6 @@ function AddNetworkLogonRight()
 }
 
 # can be removed later versions
-import-module RemoteDesktop;
 import-module RemoteDesktop -Verbose:$false | Out-Null;
 
 
@@ -2399,6 +2460,9 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 	
 	# Check if machine has pending restarts.
 	PendingRestartRDS
+	
+	# Check machine has no proxy configuration
+	CheckNoProxyRDS
 	
 	if($gpoRDSerrorsfound -gt 0){
 		Write-LogMessage -type Warning -MSG "Please fix GPO RDS related errors first."
@@ -3562,8 +3626,8 @@ Pause
 # SIG # Begin signature block
 # MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDsAMtlK5NHWZUR
-# raGnQC6lmMvEY+t8Xqd9fHmu+6iIA6CCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAcV+U42UGYYeNy
+# vZ9k1/Lex75ecqpc7AwFiklf9AmYjKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3644,23 +3708,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDE
-# 3U/6L+ET1R3bfsBs6fYse0qKuNUGyLEpagJ0sNV9SzANBgkqhkiG9w0BAQEFAASC
-# AgCZMMLc3Po8ujQ+7G5Jrv0PS/DuYRvqg3LAMxZNcj1a0NeQS7lmQkhVIxB1csvP
-# nYZqvEyZPdwTakhXUp1RNIESLiQub+fhcSmYqQc+TRZDWBJrjrkqZNuZehVSo0hg
-# Mgyx8MXI7xZS/4yRhN79Itlw30XXFemtG5r569BRghODG0Yf7gxlqmvVCWlYpj7D
-# upvi5sVQkM1wMcwaJNxmbYmznMUbqI/eFHan7yDI3cLmP8dsRcXbWu32Lv2bVsos
-# sbXKZIsCJpqrHXKvErIH2Pn4tqOhDTLSGMznw5HjpFqSi7syt+o+QMg0n0f5lFH4
-# fa3eyb3TbQZVxMGWFK5PxXdnHEeMfN2T6HWVJOlEnA1+JW0We4RuwIO0k0rQHK+X
-# nc1IwLya9erQNhlUvnu2znmNbdU/wXWUljThXcRKTySWfa9ZneMyjjS4QkajDuHH
-# 58ZgMATUFjQNp7Xn8iNsloGI8JcXWFuuHEWR0Kro+SCP2J15O+Li68TZ5Gm3jFyT
-# IiQo/+t167kSLp3W9dHXthT696PJOuSM6y3ohrOXaLr38T7m90OsSLSNsQn8lSqS
-# 3PKiVj3+tTUuVjG8zxOjXm1hvfbH5KO50tChaZowAk8OJYd9Kq2j05CxED8b2Nab
-# h2gB7MYjdJ6SeNC60GCi3I6cFCuSR+/cYy5AgC9WQ1XtWKGCDiswgg4nBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA1
+# Rc9u+ujnnLZRTHoU/8KbVN+MUMR2us9WYV7YHRRhSjANBgkqhkiG9w0BAQEFAASC
+# AgC449VuOWv0WHdHZUlBnsVvRB0In75FxKisbw2gjMGil3fIBK3ZAZEQ3F/d4Zra
+# knZTMj8w/TP6tPZVsTbkTx3QITf4PdPFHSU0claCf5P/7kzNVCTAgplKGqZAE+HN
+# pua0vlO6Ox0vOkYVD0zx9nx7ICaah6pOgvmDrzjrhv03ec88TPwoCWWpabMViJms
+# NZNtPEJ+Pu6+bBvRcR74aCLsMKg6B1em5XGDVn+yq8GhkeaXFQI5/MiKUNqyuKcu
+# eq7hZgqaxcz+7MzYYysXXVvq/5IdSvGi14txmOF+1vzsMjLMeDQQWQ/zDdQJ14W5
+# 1MRe9Lj2s9yS/GQEKXcA7WjJdhtX8GQsBgcu83nu3JFCjs6r9b6DY7/lJiGVv38j
+# oubitVm9lJuPA3ifdNO0cdkp4YLpXYOsii2xHw/PKVcCq/0+vF3XldGzHiL60jrF
+# 5PnV7sND190WcN7S4z26Iv6uYeA9tA30SYQimXzJzaq5M0GEZYDRkAIfydGRPH0v
+# V9zwhsYXU3EWKRkMQ5oWv6xGxIZ6qmg3j/5txLPHbV6qhbJ8U1RKZZk5uDK0HopR
+# VykxF+5+n4xB5fiT+0KScrl7quqUJMCQNm0QDTPwwumUfnpvb4zcgnPEw0uybRIc
+# X1D4ugb5qYl09g34PzAaARKjN/Q1WQFQskxx0wDQuL1l9qGCDiswgg4nBgorBgEE
 # AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBSc1XHsw7fVDumNBHlEAQ93ZDHR4AIUSH1YD24AlmdCTJTbLerO
-# kUHPKTkYDzIwMjMwMTA0MTkyODIwWjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# BgUrDgMCGgUABBQCgYrGLoVL/A9mIT+HfmRB6puARQIUCT0t7TbsoNHrQ1vsghtf
+# RjHKasAYDzIwMjMwMTA1MTI0ODU3WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
 # UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
 # dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
 # U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
@@ -3724,13 +3788,13 @@ Pause
 # HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
 # dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
 # YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjMwMTA0MTkyODIwWjAvBgkqhkiG9w0BCQQxIgQgMgz35TrP3FsV
-# xn+tF6Qo/UI6hI80ygayE52JWneTJ4owNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# 9w0BCQUxDxcNMjMwMTA1MTI0ODU3WjAvBgkqhkiG9w0BCQQxIgQgZ2CRAZ7D4Jp2
+# 0X4jpoAyt+baZZiFpSWRI/xtA3qM45YwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
 # xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# AJwiBMAKYZTKCH+drGarZu3N1NsLrJ+sjH+xH8SORK9hiE0rtO+Zd5lA5KvZ1gJ2
-# x+pjtKuNcXxLYxOVkl+HS/zKpM7C2Uw2lKJAG0uEQlu6VGJgW7zQ5/AbLUhUSD8+
-# UYE9RIlYsJO+OueveWWjUbCxdP99wOL+/+Tbx6hKdV5mJYVXPSDbAXqfwJ4bEYMV
-# 5zip0C+e2y3QYTDvrCAtBZPyafdQs72992c+RX0hqXL4mU5uHuoSFfzjG1C2JmMf
-# bsE8pqW1rXIZJiYIy+Z1VjOys+dyGpKdicAX7Ub8utFVTgQd/qxBUOwGnjBIwODe
-# LUUIokkzyYIhFTOkO+4hOZI=
+# AGykoou6lj7hW1wc/jrgVBrsP6gd1tsRL1LsRPrdph0/+Q79oAiZl6CkcKtM27Ag
+# HXWRezexbP5yNGRj1FRrYSI50GTqpcPP8mgBUEZLxne3IQNs3Gnps9BXx/XXQpCT
+# uj+hC67VDakbDPY2D+RahegjucPMsMY/OtSW1p2JRx94IY6zfXOP4wREUymxnY2C
+# 5iLiJQ221rPGR9T+iPdVCRf5gmO0qfQyLZwcV5jrxJyHixhaDr1U2xPKGhNFVvxd
+# 2+DVy95RuiA9COExnOVHM3/pP2rs5kJMzP9EIomAz4lsh5CvdwMbjFN0W+BQMqDU
+# zrDGLNVwG4uou5Sow9azReQ=
 # SIG # End signature block
