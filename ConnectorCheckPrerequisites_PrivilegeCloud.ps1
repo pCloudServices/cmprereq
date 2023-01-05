@@ -1270,7 +1270,6 @@ Function PendingRestart
 		Write-LogMessage -Type Verbose -Msg "Starting PendingRestart..."
 		$actual = ""
 		$result = $false
-		$errorMsg = ""
 
 		$regComponentBasedServicing = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | Where-Object { $_.Name -match "RebootPending" })
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
@@ -1292,6 +1291,7 @@ Function PendingRestart
 		{
 			$actual = $false
 			$result = $True
+			$errorMsg = ""
 		}
 	
 		Write-LogMessage -Type Verbose -Msg "Finished PendingRestart"
@@ -2161,6 +2161,66 @@ Function MachineNameCharLimit()
 	}
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CheckNoProxy
+# Description....: Checks proxy configuration, required direct access for RDS deployment
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function CheckNoProxy()
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting CheckNoProxy..."
+		$actual = ""
+		$result = $False
+		$errorMsg = ""
+        $expected = $false
+
+		$proxyStatus = (netsh winhttp show proxy)
+		
+        
+        #Check if machine name is over 15 chars.
+        if($proxyStatus -match "Direct access"){
+            $result = $true
+		    $errorMsg = ""
+            $actual = $false
+        }
+        Else{
+            $result = $false
+		    $errorMsg = "Please disable proxy for the duration of the installation. run `"netsh winhttp show proxy`""
+			$actual = $true
+        }
+		
+		Write-LogMessage -Type Verbose -Msg "Finished CheckNoProxy"
+	} catch {
+		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $false;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+Function CheckNoProxy()
+{
+	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
+	if($(netsh winhttp show proxy) -notmatch "Direct access")
+	{
+		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`""
+		Pause
+		Exit
+	}
+	Else
+	{
+		Write-LogMessage -Type info	-Msg "No proxy configured." -early
+	}
+}
+
 function GetOSVersionInternal()
 {
 Set-Variable OS_VERSION_WINDOWS_2008_R2_PCKG -value 0 -scope script
@@ -2379,7 +2439,6 @@ function AddNetworkLogonRight()
 }
 
 # can be removed later versions
-import-module RemoteDesktop;
 import-module RemoteDesktop -Verbose:$false | Out-Null;
 
 
