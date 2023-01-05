@@ -2212,7 +2212,7 @@ Function CheckNoProxyRDS()
 	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
 	if($(netsh winhttp show proxy) -notmatch "Direct access")
 	{
-		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`""
+		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`" to disable run `"netsh winhttp reset proxy`""
 		Pause
 		Exit
 	}
