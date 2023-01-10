@@ -71,7 +71,7 @@ $OutputEncoding = [Console]::InputEncoding = [Console]::OutputEncoding = New-Obj
 $arrCheckPrerequisitesPOC = @("CheckTLS1")
 
 ## List of checks to be excluded when machine is out of domain
-$arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix") #PSM
+$arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix","remoteAppDomainUserPermissions") #PSM
 
 ## List of checks to be performed on every run of the script
 $arrCheckPrerequisitesGeneral = @(
@@ -108,8 +108,7 @@ $arrCheckPrerequisitesPSM = @(
 #"CheckNoRDS", #PSM
 "SQLServerPermissions", #PSM
 "SecondaryLogon", #PSM
-"KUsrInitDELL", #PSM
-"remoteAppDomainUserPermissions" #PSM
+"KUsrInitDELL" #PSM
 )
 
 $arrCheckPrerequisitesCPM = @(
@@ -2558,6 +2557,8 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
 				    {
 				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag." -Early
+						Pause
+						Exit
 				    }
 			    }
                 # add network logon rights, used in case its missing or if CPM was installed first and hardened the machine.
