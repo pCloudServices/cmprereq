@@ -2234,7 +2234,7 @@ Function remoteAppDomainUserPermissions()
 			# NOT domain user with administrative rights
 			$actual = $false
 			$result = $False
-			$errorMsg = "you must run the Privileged Session Manager installation with a user who is a member of `"Domain Users`" group and in the local administrators group."
+			$errorMsg = "Installing user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
 			$expected = $true
 		}
 		Else{
