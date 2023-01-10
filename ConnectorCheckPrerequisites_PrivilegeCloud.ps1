@@ -71,7 +71,7 @@ $OutputEncoding = [Console]::InputEncoding = [Console]::OutputEncoding = New-Obj
 $arrCheckPrerequisitesPOC = @("CheckTLS1")
 
 ## List of checks to be excluded when machine is out of domain
-$arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix") #PSM
+$arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix","remoteAppDomainUserPermissions") #PSM
 
 ## List of checks to be performed on every run of the script
 $arrCheckPrerequisitesGeneral = @(
@@ -161,7 +161,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "9"
+[int]$versionNumber = "10"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2207,6 +2207,56 @@ Function CheckNoProxy()
 	}
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: remoteAppDomainUserPermissions
+# Description....: Checks that executing user is in "Domain Users" group in AD and in local "administrators" group in PSM machine.
+# Parameters.....: None
+# Return Values..: True False
+# =================================================================================================================================
+Function remoteAppDomainUserPermissions()
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting remoteAppDomainUserPermissions..."
+		$actual = ""
+		$result = $False
+		$errorMsg = ""
+        $expected = $true
+
+		$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+		$WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
+
+		if(($WindowsPrincipal.IsInRole("Domain Users") -eq $False) -or 
+    	($WindowsPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator") -eq $False))
+		{
+			# NOT domain user with administrative rights
+			$actual = $false
+			$result = $False
+			$errorMsg = "Installing user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
+			$expected = $true
+		}
+		Else{
+			$actual = $true
+			$result = $true
+			$errorMsg = ""
+			$expected = $true
+		}
+   
+		Write-LogMessage -Type Verbose -Msg "Finished remoteAppDomainUserPermissions"
+
+	} catch {
+		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+
+	return [PsCustomObject]@{
+		actual = $actual;
+		result = $result;
+		errorMsg = $errorMsg;
+		expected = $true;
+	}
+}
+
 Function CheckNoProxyRDS()
 {
 	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
@@ -2507,6 +2557,8 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
 				    {
 				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag." -Early
+						Pause
+						Exit
 				    }
 			    }
                 # add network logon rights, used in case its missing or if CPM was installed first and hardened the machine.
@@ -3626,8 +3678,8 @@ Pause
 # SIG # Begin signature block
 # MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCOEaN57g2pJ5hA
-# HB/nC9nPlMbR5uv62Gy/i4RFAwG9gKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBiIh4E0GvXQCAN
+# 6IdG1cNMoxBzgond33AqRy/tzu3lkKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3708,23 +3760,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDR
-# WVjAp5ZJXPuYxmNxi2xCM/GBYGkxUKEYmfVwNrdCMDANBgkqhkiG9w0BAQEFAASC
-# AgBlKnV7FjFjokMuEnS0Py8udhJ1bI/I1Z7PRwm4gGPQchjeGacuk0/U6WdmgrUp
-# Bt9iLMJyT9q3L1pVHnN3WnBg8jnuSV2UXkN8GGPsv4SqA1g0/wV7SuI29zd4qvCl
-# x7ZQfkPa5fySbe2c4lnBQH3mHlD4un0Q51y9fVEXHjPT8csPa6MI7bfDt44qDWHa
-# T54yvUDSxAqwuRwcJWFcQDcZf5JRAHgoRxY9W3opXS973GvmQcMVlfWoGTqzSYaa
-# sUNb3ZrVEroX8oTn9SmGzIQzuflAvkG1Ho4H8P8d/JjH2NBTtvUGJUeMt3OfIFmr
-# 2ULy25G1nmP4TPoGy0vX6dFOLi8RxBGaU4ST2EbH8mSXi1Cp2JElCDQOeFnW0d9Y
-# UeW1gOFK6qitqyEIuKjBGoyqiEfOuD71CvHD836+moswapxN37eaakGQFMgJKvuW
-# jNUfSw9LmjivYKWq+qPbUtZF2A6nK08Vv3KcAVzDf5urPsa8Fdg8AU/4RrLgQhCl
-# ynYQ653EoGweFFboPCCmtqeMwf9GWsXFy0RLET+wLbiAPvLBB7wcBsB8loAaK9wf
-# 3Zj2/DlQw/ayZitViupmKW9S7NUs+3eQMa1eSmXEXDkrsenvYv59ZWeJtIbqdiTc
-# GhlvOLlSHRol9sxEN9/maCQ4GTLLQYx0CL8xw5J92EMQEaGCDiwwgg4oBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCN
+# QDBemTyrwh5FVxCEchQWnsz5+a+xw/IRFmiNvFZX9zANBgkqhkiG9w0BAQEFAASC
+# AgA9iOdqsaB5XQhjvK3J/gGCIPrCYNBX+8Bzrpu0W0Zjgf3nKEiBlO6ss8YkJTtQ
+# uvWdHTBQ/Qa525vSiKOlDiOi9wFBVt0DnS9HEREwxWxrVxUI8GuKTnjsEmbExDKl
+# T4SfPghsPEepV/1/UCLQ2TZkoYR3qV9w5bbdG/9Fs/hN9SuE0jo7LQY2AsXK29Ns
+# TW7PrzLjydUvGD6VHM4yK9aO6M3AvyA5byJks72RMfUhKHrNr6HtQctfUmA9YKiP
+# Axh57fNpD6668y3qiMj9LpmP+XUicJoNGX/2/752mnKNWp2rPGTZC3Hvbfmrtsrv
+# 0WiMjFXz2Dz3ztOK3blgUPk3InsbIhS15EPsqn+Ec7a1UyFbcwheqq4OJ8YhvmMx
+# VX/5DBDxzs3hRdCTvK/PLc5+L+k7TQz6sVf8kYz+gjWXbQWRD6Ewo7xtv1e4NTyS
+# Kbb+Hm4RDBeb5iKppdzqieb+it7+3GeGtlot6ltfHHvaxYhABWUrZEoVGnv3X5n1
+# nEcKTlnfeoBsP85ETd5wxl6S+6wfSPHYWlWKVoanp102KdfXpGZ9Cch6+sBnpKiM
+# AYvMIAn/w+oHpIiMrTalq3HOdsbdD8DdjJsKxfcMThdxpxRR9ucTc4p3YtgL9VQE
+# HFq/ulgYfUf8SbDIb37g4P2ZWjR6X5mIfA/Vx2pDDZ+XtKGCDiwwgg4oBgorBgEE
 # AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBS5C+vfo1slcbyw4y21oFisBWFC+wIVAPY7iwrolhQJ0ySuibWp
-# VahqAu+BGA8yMDIzMDEwNTIzMDE1MFowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
+# BgUrDgMCGgUABBSjfCKJY0bZv21wJQdecCV8Vh+dywIVAPuzReLyik30oG/5qm/K
+# Zs7+X2uaGA8yMDIzMDExMDEyMjg0NlowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
 # VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
 # bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
 # ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
@@ -3788,13 +3840,13 @@ Pause
 # MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
 # bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
 # CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIzMDEwNTIzMDE1MFowLwYJKoZIhvcNAQkEMSIEICVCxBhBVCpB
-# JWDrXpPLe3YoCoMh3CWjS4W+ALnKMep+MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
+# hvcNAQkFMQ8XDTIzMDExMDEyMjg0NlowLwYJKoZIhvcNAQkEMSIEIB6OOKojLooG
+# X3iiAnsPIpWjEPjU6sOhKfwpympAyXcdMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
 # IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQCLsqTw1bx8mu4XPryVc6ztHGASEQOXt672Pp3eUHoKfXMF8V1kmA10jLeIcZV2
-# RDq2nNlpN70YShDKJ4eAhet24ZO8JUqVTLwnAtKFd7Kw2pbTIIiNMIT/AcuwDTKT
-# akWybQM2GnLqyCQbWvPADY+G2lKTfHbTS9oftALyu+bq7+MHJB3WD6aWmOfcN8ru
-# QMtVWpuhQRjbQbwBgnI/ya3FbF9huWR2vfeT90IWNA079oTPm0fHEyoqtdKvMC2K
-# AsQIf8jt8UkSSDIhGjkmuKqpDntUJDc8DqnghPVXVyucjj1PxxEhq2y1C/dD8Xug
-# fJZh6E3CaYZYXTsSuwutRpNg
+# AQCl1Ku4Sc4xEZ2dnneTYmF1bkMvjNzidlSWJFVsLhVrbLwux/SH+cBLEsgTvSXO
+# 0P1SNMHxHLRVI76tx3lytZKmXI8gACotn3myeYz9RzeL42YU+Kv2qNwxhsW9Dwcw
+# GZYyNBQAQZMwfXcGfOz5CHK1J2JtCIXloS9+9IFy/fCmDaW7qgy47M2dm8sfwuc2
+# hm17U9S2PvcM6wCrqaAdICA7R2gJgvdJpFd9I4bNXvSn9xGawD1eki4OCiIw9pIG
+# OCGsZm4Dx+nnlLwCsJDjV0ZTCX/Op+Sp0BIwnhbhGwehJUmCSpZsrGlGsIoIekBr
+# oHt/MiEnRQse0oTkpuAprBVZ
 # SIG # End signature block
