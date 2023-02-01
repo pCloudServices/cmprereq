@@ -161,7 +161,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "11"
+[int]$versionNumber = "12"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2552,14 +2552,18 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 			    $PrincipalObject = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
 			    if (-not (IsLoginWithDomainUser))
 			    {
-                    Write-LogMessage -type info -MSG "The account is not a domain user which is needed to install Connection Broker. This feature will not be installed" -Early
-				    # if the computer is in a domain and the user is local, display relevant message
-				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
-				    {
-				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag." -Early
+					# if the computer is in a domain and the user is local, display relevant message
+					if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
+					{
+						Write-LogMessage -type Warning -MSG "Machine is in domain but you are logged in with a local user, login with a domain user and rerun the script to complete RDS CB Install."
 						Pause
-						Exit
-				    }
+						return
+					}
+				# Machine is not part of domain and user is not domain user.
+                Write-LogMessage -type Warning -MSG "Machine is not part of any domain, RDS CB will not be installed (PSM remoteApp feature will not work)."
+				Write-LogMessage -type Warning -MSG "You can ignore this error if machine is intended to be out of domain installation."
+				Pause
+				return
 			    }
                 # add network logon rights, used in case its missing or if CPM was installed first and hardened the machine.
                 AddNetworkLogonRight
@@ -3673,13 +3677,12 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 Pause
 ###########################################################################################
 # Main end
-###########################################################################################	
-#endregion
+###########################################################################################
 # SIG # Begin signature block
 # MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDT09+pc89AfJZ1
-# o01hkco/++5EJTz3+rr/HBM5Ew+mUKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB+kqm5ttXt+5u9
+# C5roKaEz5bt4nSaMlfxW7Ry9cpAa1qCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3760,23 +3763,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBU
-# lxon9O5y9gHnFwOIjtnd9/7SHZxQ0oFuHcMygqduTTANBgkqhkiG9w0BAQEFAASC
-# AgBQqR94YpR40jX6TbtBes0HYvKwdGzoQbFcVtjyhDqVmCWgxsmpbVLrb/t2tsbS
-# s9gHUrPQRhaCPHZLyKofMN7c8nzukd2wdaDDUPncrzZ/8H+zbjIHjmInRFBshnt9
-# K4kvDIJTbafGeVXYZ89XZTLyJ1Ju7x1UGLbqDt8vcT1qu63bfg130vWNPwDoFE+l
-# lCXhiK8NzF4iS+Jm/wXlGzHwUMKDgqmM1L8h4ybU6hdzd6G0uhjUk4stEnQbx/NW
-# eDMOwRw97hCr0NZlrPTsZ4OAy1b+70btIN545W9oE9ljhRQPUi98ZV+SjZ9H6s+M
-# cEPB+Du/a1pRdyMQl0+dQi0cDy8ZOHXJGTK8wPGKGt6HNJsflhysHlEoVV0U3rer
-# eGcWjLbELXK3liS+np13ax/8J+ouqMLBt0Pg733PV7FyxXYzo9cjm3oH43EKII06
-# xkNpESqnzJH2h5+nLR5NIAuCghvvludq2059vDWankqeHXt5ReCwmg+h/Diocoo8
-# bkP8ScJS95tNebOvB1bfjLjIRqjGOK6Sd11NiP6+T1BTzSohLRveTYGnz7KAmGBX
-# F6U+O1gLinfZgvJiINHsYD8rRLPabo6WTDdUVG3ZznyF1j1heBZLiG3pRuoAq7Db
-# L1mLxu2/7SvTMH6v9fwSSF9z48O4OKI8mz/v8vdsYyq/KaGCDiswgg4nBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCC+
+# KUvtSdZfhTnv93s4mGrKL/C96meOkRE+X5Nzvw+LizANBgkqhkiG9w0BAQEFAASC
+# AgBFv6l/xB3FRnvMvb9555cemmN1AZ5HOPH7E61HWAS0zeTVQPOypigVxp99VO/T
+# NSVkG8oTxefs60ubFUt00WRCO33BnjZDcBsX6nvrZqGoGHXF0hcvqtgzYGF2SXQ6
+# LhbbuV02/7zAqcMpgvYod/9H+vZMG5YX9clPjMvvqkDuR6+w0s/utlvS2vLJdQIK
+# fkqAE/d5aVa9btGtz/buhECldAyX4xOAk6vmCxwoNjiiGBAY3w1AoYv3gHxeHFm+
+# 4U+bZder0q2hwd317/S4z1dCh4OHXr45v1Izt9ofKh9ucCm0KP37eoxqXNtLfrXK
+# O+Ih/xsAub5fdJOjol78wXnglCHpgD0JS2NG/cWY6OoINlFJD3cBupT0gRd66tAm
+# CDEBhaICIYuIv461pTVhj78vspgkIV2Q8wABKy2oCeqT7hEbc7ORtJasK1oU1Mv8
+# emvCdIfr6vvZO/x8Vmo7ODMdBju3sChB9YJUVXjtXuP8xgy1irW6SrMTOmSSF4ot
+# /6VrkvRhKkWtCXWNEnfiQ9aI40w5TQHtQckqwFaum/OIRb7+Q0HXD8OnxoEe104d
+# xBPb5z2+BgLEYDw/mmJTBVWUS33UksrQG5oa///uE/rrVZ/Dy/PeBrjGGNf6tjTM
+# 52VTwnkQRx1Ti/vAer6U8peFdoyO46wmzaQ4hr0RI4bljKGCDiswgg4nBgorBgEE
 # AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBRmHszkKj12PUQtbAxW9LYvKeF+HwIUHExp9NKhL9odisZoPsYu
-# 67uEoaIYDzIwMjMwMTIzMTQyODQ3WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# BgUrDgMCGgUABBSWwm4ZrSiOwtGAuiP+I40dgZCxowIUAcRqREaXYcLkQpNnMJr7
+# ebipjc8YDzIwMjMwMjAxMTgwNjE3WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
 # UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
 # dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
 # U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
@@ -3840,13 +3843,13 @@ Pause
 # HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
 # dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
 # YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjMwMTIzMTQyODQ3WjAvBgkqhkiG9w0BCQQxIgQgnjFc9/85qQk7
-# LwUt5GT1uWYiVxFf/gBoP5pCAx00lNMwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# 9w0BCQUxDxcNMjMwMjAxMTgwNjE3WjAvBgkqhkiG9w0BCQQxIgQgCiwO+PJCOUUc
+# SmX6Gzg297BcV0gckKoLGvPc4ei9EfUwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
 # xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# AHSyJryeKvhRiQZCv/NfhNiQ1nk2MNG0xZKT4Ri7t9rdyE3ZT7xlNm+xLVYFHBIX
-# MyEcjEdg1BvIvY+AvtIm/owZoIRIA6ZVeY4RyKlq3baybbTG12rHLPsn+XfvAENW
-# MKVAB+owuSJOcXcaa+8fIk88zJ6aU6kwYHp3K2Q9ZB9QWwoUx5hSC8kD+gphEP37
-# WKXNRGcJPHx4hUO0Nnp7wqWU/vdCA6lZQhFlUghVU+Dg2KoAVpvXAZMaoE8iYAok
-# kcdvU5zbcYnHeosJhvQuORAranrDaxX+VeBXlqri0Xr3r7L4e6sM0vpEr9maH5jo
-# jIaIizA9OefmOAJnV0SzgQc=
+# AC1Plr1EI5di1lyrQG4SMhsHIJHs0cNqKJ9VlxN4U6uAoRuef5arFptzqCVixD7V
+# n0UcgbY9djJWmmfH0mkpfefEDfJ/MVbenIgRA3ZkIBHs2d6IYSQZUBNMqZu/rrwO
+# W7JLbhLfnoRLtH/Jd8JzUAi0UotyEKm2uYbgEdF+e6JSCBSBV5Yv6XgovwJrMcn3
+# 6N5nl5OK6VdBbphB6K9vJPTnhhyTR4UGWnTXwqkds/vqQ/5WJ4tJopCoZcnOiSJa
+# 6GlC/Ur1yomPkEVNu+2Br71uXBiyzHNSWGnDB8NxDnydeDXmhZZf9YieQ4ZDI2Uq
+# vjeQFDc3w7Nk1cpjlsPQFtI=
 # SIG # End signature block
