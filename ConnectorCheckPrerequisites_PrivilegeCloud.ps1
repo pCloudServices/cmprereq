@@ -2552,15 +2552,18 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 			    $PrincipalObject = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
 			    if (-not (IsLoginWithDomainUser))
 			    {
-                    Write-LogMessage -type Warning -MSG "The account is not a domain user which is needed to install Connection Broker. This feature will not be installed"
-					break
-				    # if the computer is in a domain and the user is local, display relevant message
-				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain -eq $false)
-				    {
-				    	Write-LogMessage -type Warning -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag."
+					# if the computer is in a domain and the user is local, display relevant message
+					if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
+					{
+						Write-LogMessage -type Warning -MSG "Machine is in domain but you are logged in with a local user, login with a domain user and rerun the script to complete RDS CB Install."
 						Pause
 						return
-				    }
+					}
+				# Machine is not part of domain and user is not domain user.
+                Write-LogMessage -type Warning -MSG "Machine is not part of any domain, RDS CB will not be installed (PSM remoteApp feature will not work)."
+				Write-LogMessage -type Warning -MSG "You can ignore this error if machine is intended to be out of domain installation."
+				Pause
+				return
 			    }
                 # add network logon rights, used in case its missing or if CPM was installed first and hardened the machine.
                 AddNetworkLogonRight
