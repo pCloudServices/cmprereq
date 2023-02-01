@@ -2552,12 +2552,12 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 			    $PrincipalObject = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
 			    if (-not (IsLoginWithDomainUser))
 			    {
-                    Write-LogMessage -type info -MSG "The account is not a domain user which is needed to install Connection Broker. This feature will not be installed" -Early
+                    Write-LogMessage -type Warning -MSG "The account is not a domain user which is needed to install Connection Broker. This feature will not be installed"
 					break
 				    # if the computer is in a domain and the user is local, display relevant message
 				    if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain -eq $false)
 				    {
-				    	Write-LogMessage -type info -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag." -Early
+				    	Write-LogMessage -type Warning -MSG "RDS was partially installed. For a full RDS installation, login with a domain user and rerun the script with -InstallRDS flag."
 						Pause
 						return
 				    }
