@@ -606,6 +606,7 @@ Function OSVersion
 		{
 			$errorMsg = "Detected OS 2022, only CPM can be installed on it. PSM is not yet supported."
 			$result = $true
+		}
 		else
 		{
 			$result = $false
