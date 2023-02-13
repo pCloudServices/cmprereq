@@ -600,12 +600,12 @@ Function OSVersion
 		elseif($actual -Like '*2012 R2*')
 		{
 			$errorMsg = "Privileged Cloud installation must be run on Windows Server 2016/2019."   
-			$result = $true
+			$result = $false
 		}
 		elseif($actual -like '*2022*')
 		{
 			$errorMsg = "Detected OS 2022, only CPM can be installed on it. PSM is not yet supported."
-			$result = $true
+			$result = $false
 		}
 		else
 		{
