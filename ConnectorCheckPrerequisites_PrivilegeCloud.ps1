@@ -161,7 +161,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "13"
+[int]$versionNumber = "14"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -1329,14 +1329,14 @@ Function PendingRestartRDS
 		$regComponentBasedServicing = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | Where-Object { $_.Name -match "RebootPending" })
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
+		# SCCM always returns a value back, so we check it's not true instead.
 		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
 		$chkComponentBasedServicing = ($null -ne $regComponentBasedServicing)
 		$chkWindowsUpdate =	($null -ne $regWindowsUpdate)
 		$chkSessionManager = ($null -ne $regSessionManager)
-		$chkClientUtilities = ($null -ne $wmiClientUtilities)
 		
-		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or $chkClientUtilities)
+		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or ($wmiClientUtilities -eq $true))
 		{
 			Write-LogMessage -Type Warning -Msg "Pending restart detected, restart and run the script again."
 			Pause
@@ -3687,8 +3687,8 @@ Pause
 # SIG # Begin signature block
 # MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAKk79plwH5xQp5
-# AqapSzf/jdxr55aFfJyDg13OoNDzWaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAgbS6BSnqUnUnI
+# 6Y7hMKEbjH5zAVKwERtQQitciNS5v6CCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3769,23 +3769,23 @@ Pause
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBL
-# JNm8cBoWDdpveJkF0KJHP7EZdURfleupOYirxIgdCjANBgkqhkiG9w0BAQEFAASC
-# AgBaSTerJZWrsM4X8Lcd2ORaONOHVLRps3jPOhuIq374a+KE8HMtkDEpM7sysLHP
-# aQSbpYYf/F7X5jyC9sb6CMbMKE4t3JlSmMjawxtiVCpfSfABdIzcOHF9vixkJIMJ
-# 1pqB/U9+2jJXbgQwseMYCTXao9ZI1Q8hd8vZpdgzgavdJVdraNKkQ3X488mNtENN
-# QDx0tP32Do82rb1BL9zmD0kVJiu2x3DQWwxZOw+9LGrzDDtamskTagmC0tmVzcnx
-# cLUSgkAsJ/bBx1jkrrxFbzVk+cuTtKtr7G8BqcZA5OGC+Tf325EBrF3sM23hNvLE
-# rLw94X1RkGqRSCvDgc/+XAoQDj7pB/5v3YgZYErbIdWy3hddfz3JIyQ/pp//lJyn
-# ZT1Kjv/EDtZNNGMvlOUqDEB/lN7F8Flduap+t/YUQO0GqheelG/8swqFmwKtruEw
-# fcRL6ATe1Jntk27gawvu1vLAvLrfZFrZgX/65Yz6xTYO+wSpcBn2euuEkVnF/JgB
-# +tRvcvt0TsCZBFaVcYk54No5/ZX2OsRyVLVPuYsy2sIoytmyRC4nwVi/aJrqQLPI
-# 7P5dbEQH5daocGEuIPzJ5Pk9Cdpo5zFkMK8wd58c+RBY/tyA17Msnn0Vmx39echI
-# MdxJJF9fFRzn/KxSKghRZsUNPWpYQquzNmA1d+LMKTs8/6GCDiwwgg4oBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCC5
+# Ag+SMi2jIF0DA4utE+0yakmwPYMQd//x9C4czlXbpzANBgkqhkiG9w0BAQEFAASC
+# AgDn57XAPAtIrTub/3YiR2IB53XzRn/oY81I/XFk8U+LYw2Q7mHUwYp3KeI3YTkP
+# PEWcczyL92kgIPYKgqu1s4zK6f4ZqHA8bbCe3Bb8x6AYMJZDGtLXUfzL+P9v7fHL
+# ICBiWY6c1iV9EuUT1MwulkDpAff0+C5PxsIJpGJzrxB1fc3irUGWRe3bKvXazh2a
+# yQNWq5BFQt0qOrJeucSYgaOcO594l3M4+ZWE15Ho/RDbQHP+k9GTZyz1LyoJMlv1
+# wtf79KTjTFZEoKVB4gFD7m3pYtL2dgW+9ahojqX6JknKKFCaUgueXTzHM21KljQh
+# TNC7NaHG2Xf8nxUycflpkc6S8rw/4MIvpda5BMotk91hRCKMhYhNYpn8do5N632M
+# b9kh8+Dr9vxuPupmcSZ8Afx561bbNtODLmj32B6z4vLjtuY21/jOrA29kMS3Jy3P
+# flCsqoyhxlLSzo6nLNqotOg0vmqMZROEcX0To+DFgvUjUWFX4JZcYFBvHSIBEQKP
+# iJqIOa0pkxAg2EI4LwlVidgoI6iVdq+9yCSJ6CBazGukJBzZD7vtFK5IVojW8zyZ
+# OcVMcF/UlP0vaFpyPTe9YsMlgJukU3fwu0o/AZiVe7Kr06zqkc3sdF/sU7XFwqiZ
+# beXuLYh5QqY6C84AqeilEaGqLBpBfqsgoESzPKwM79WA4KGCDiwwgg4oBgorBgEE
 # AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBSKdVltbmugAvSbBhzptH1XZseayAIVANyecCm8ELiHEEYWyOZ9
-# kat7CQVeGA8yMDIzMDIxMzE0NTQxMlowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
+# BgUrDgMCGgUABBSiWIJkNvaw3A59YIZppqJc18beXgIVALCm8t7fH2vTIkQYau3K
+# Lzt1P80FGA8yMDIzMDIxMzE1MDQzNlowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
 # VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
 # bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
 # ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
@@ -3849,13 +3849,13 @@ Pause
 # MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
 # bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
 # CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIzMDIxMzE0NTQxMlowLwYJKoZIhvcNAQkEMSIEIB/Mfg2G4wKW
-# Mvhtd44hX9fRh71ZfVG1eUcPQXkYt/QxMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
+# hvcNAQkFMQ8XDTIzMDIxMzE1MDQzNlowLwYJKoZIhvcNAQkEMSIEIKEuUC5o2jX6
+# rxXzqgy+q1Fig/KFzc5yWEC/DrX9ny7iMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
 # IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQCCeWCxY5f4YLDnskx1xAUm4lC8EooPIAxxbD1P3P92bNcOkTApOPMQNMEagmzs
-# VcVPJgJJkd+tndbFsCSX8AoLxRD4imme6YVKc0yxpIxs/3FVfXdYMlZ2dvqChR+e
-# tkorhq9WyBhVrkT1Q6gmdbhO6cpzdSfHhfuyUhy8DZbNl5dmCTNqpFKUckX97Ifb
-# AiaaVl/n9Th/XI7P7BRGsj05Ztzdj7OMfMN3zGlJEFHJb4C/JZAJ0G2nbFfVo4Sw
-# OPdmoT0g4V7qiaLzE/Aq49nO9d1uRSrIr4cS9lYQe5XcM0XR1o6LJ+CcThcLEV4n
-# SY9SZhga0veyfNexDqm47K6H
+# AQCeqTQIXIeITGhuC0XLV9z4hoS+NPzGT54BjcO0ULQp3mjiwH5RnVjzDaOzil71
+# emxuLjf+loNuA36ly4Ci0yJoBGvofmv4DnS0ATs43AQrAxkd7BwrZR36iXBFLv/0
+# d/6BMoD+lftlhtjQQJSnYze0JBScyZhR3gZckZGdEHOCBKvJKAdFB/FhcEW5dRcR
+# kyvxut45dvennw14mtsoq3XThb2aR8fr3kUBSrkieUBs02LU73g8m2J2DIAC3tZg
+# pLVEO1zpg6v+mLLPEdgMXYxX2iMeSTg+A9sKCQ/6vCOd2+x85qTkpq7pPbQNb9d3
+# juFHsuEBTdzTtg8cVfAoyXZe
 # SIG # End signature block
