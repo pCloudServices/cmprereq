@@ -51,13 +51,13 @@ param(
 	[Parameter(ParameterSetName='CPMConnectionTest',Mandatory=$false)]
 	[switch]$CPMConnectionTest,
     # Use this switch to skip online checks
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$SkipVersionCheck,
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$SkipIPCheck,
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$DisableNLA,
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$InstallRDS
 )
 
@@ -82,15 +82,13 @@ $arrCheckPrerequisitesGeneral = @(
 "Memory", #General
 "InterActiveLoginSmartCardIsDisabled", #General
 "UsersLoggedOn", #General
-#"KBs", #Obsolete
 "IPV6", #General
 "MachineNameCharLimit", #General
-#"NetworkAdapter", #General
+"MinimumDriveSpace", #General
 "DotNet", #General
 #"PSRemoting", #General
 #"WinRM", #General
 #"WinRMListener", #General
-#"NoPSCustomProfile", #General
 "PendingRestart", #General
 "CheckNoProxy",
 "GPO" #General + PSM
@@ -105,7 +103,6 @@ $arrCheckPrerequisitesSecureTunnel = @(
 
 
 $arrCheckPrerequisitesPSM = @(
-#"CheckNoRDS", #PSM
 "SQLServerPermissions", #PSM
 "SecondaryLogon", #PSM
 "KUsrInitDELL" #PSM
@@ -161,7 +158,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "15"
+[int]$versionNumber = "16"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -180,6 +177,7 @@ $global:TriggerAtStart = New-ScheduledTaskTrigger -AtStartup
 $global:TriggerAtLogon = New-ScheduledTaskTrigger -AtLogon
 $global:ActionNLA = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-DisableNLA`""
 $global:ActionRDS = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -NoExit -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-InstallRDS`""
+$global:ActionRDSoutOfDomain = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -NoExit -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-OutOfDomain`" `"-InstallRDS`""
 $global:taskNameNLA = "DisableNLAafterRDSInstall"
 $global:taskNameRDS = "CompleteRDSInstallAfterRestart"
 $global:taskDescrNLA = "DisableNLAafterRDSInstall"
@@ -201,7 +199,7 @@ Function Show-Menu{
     Write-Host "2: Press '2' to Enable SecondaryLogon Service" -ForegroundColor Green
     Write-Host "3: Press '3' to Run CPM Install Connection Test" -ForegroundColor Green
     Write-Host "4: Press '4' to Retry Install RDS" -ForegroundColor Green
-    Write-Host "4: Press '5' to Verify InstallerUser status" -ForegroundColor Green
+    Write-Host "5: Press '5' to Verify InstallerUser status" -ForegroundColor Green
     Write-Host "Q: Press 'Q' to quit."
 }
 Function Troubleshooting{
@@ -1395,7 +1393,53 @@ Function UsersLoggedOn
         errorMsg = $errorMsg;
         result = $result;
     }
-}	
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: MinimumDriveSpace
+# Description....: Check if machine has enough storage space to support deployments.
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function MinimumDriveSpace
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting MinimumDriveSpace..."
+		[int]$minimumSpace = 10 # 10GB minimum space required.
+
+		$expected = $minimumSpace;
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+
+		# Get drive C and convert to GB.
+		$drivespaceC = Get-PSDrive C
+		[int]$actual = [math]::Round($drivespaceC.Free / 1GB)
+		
+		if ($actual -le $minimumSpace)
+		{
+			$actual = $actual
+			$result = $false
+			$errorMsg = "Current free space on Drive C: '$($actual)' GB. We need at least '$($minimumSpace)' GB to guarantee successful download and unpacking of the files."
+		}
+		else {
+			$result = $true
+		}
+	
+		Write-LogMessage -Type Verbose -Msg "Finished MinimumDriveSpace"
+	} catch {
+		$errorMsg = "Could not check MinimumDriveSpace. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: GPO
@@ -1535,7 +1579,6 @@ Function ConsoleHTTPConnectivity
 {
 	[OutputType([PsCustomObject])]
 	param ()
-	try{
 		Write-LogMessage -Type Verbose -Msg "Starting ConsoleHTTPConnectivity..."
 		$actual = ""
 		$result = $false
@@ -1553,29 +1596,31 @@ Function ConsoleHTTPConnectivity
 		} catch {
 			if ($_.Exception.Message -eq "Unable to connect to the remote server")
 			{
-				$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL'"
+				$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL' Try it from your browser."
 				$result = $false
+				$actual = $_.Exception.Response.StatusCode.value__
 			}
 			elseif ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
 			{
-				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL'"
+				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL' Try it from your browser." 
 				$result = $false
+				$actual = $_.Exception.Response.StatusCode.value__
 			}
-            elseif ($_.Exception.Response.StatusCode.value__ -eq 404)
+            elseif ($_.Exception.Response.StatusCode.value__ -eq 400)
 			{
-				$actual = $true
-				$result = $true
+				$errorMsg = "Unable to GET to '$connectorConfigURL' did you type it correctly?"
+				$result = $false
+				$actual = $_.Exception.Response.StatusCode.value__
 			}
 			else
 			{
-				Throw $_
+				$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
+				$result = $false
+				$actual = $_.Exception.Response.StatusCode.value__
 			}
 		}		
 		
 		Write-LogMessage -Type Verbose -Msg "Finished ConsoleHTTPConnectivity"
-	} catch {
-		$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
 		
 	return [PsCustomObject]@{
 		expected = "200";
@@ -2216,6 +2261,27 @@ Function CheckNoProxy()
 }
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: CheckNoProxyRDS
+# Description....: Checks proxy configuration, required direct access for RDS deployment
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function CheckNoProxyRDS()
+{
+	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
+	if(-not($(netsh winhttp show proxy)) -match "Direct access")
+	{
+		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`" to disable run `"netsh winhttp reset proxy`""
+		Pause
+		Exit
+	}
+	Else
+	{
+		Write-LogMessage -Type info	-Msg "No proxy configured." -early
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: remoteAppDomainUserPermissions
 # Description....: Checks that executing user is in "Domain Users" group in AD and in local "administrators" group in PSM machine.
 # Parameters.....: None
@@ -2241,7 +2307,7 @@ Function remoteAppDomainUserPermissions()
 			# NOT domain user with administrative rights
 			$actual = $false
 			$result = $False
-			$errorMsg = "Installing user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
+			$errorMsg = "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
 			$expected = $true
 		}
 		Else{
@@ -2265,18 +2331,22 @@ Function remoteAppDomainUserPermissions()
 	}
 }
 
-Function CheckNoProxyRDS()
+Function remoteAppDomainUserPermissionsRDS()
 {
-	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
-	if(-not($(netsh winhttp show proxy)) -match "Direct access")
-	{
-		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`" to disable run `"netsh winhttp reset proxy`""
-		Pause
-		Exit
-	}
-	Else
-	{
-		Write-LogMessage -Type info	-Msg "No proxy configured." -early
+	# if script was ran with outofdomain flag we need to skip this test.
+	if(-not ($OutOfDomain)){
+		Write-LogMessage -Type Info -Msg "Checking current windows user has permissions to configure remoteApp..." -Early
+		$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+		$WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
+
+		if(($WindowsPrincipal.IsInRole("Domain Users") -eq $False) -or 
+    	($WindowsPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator") -eq $False))
+		{
+			# NOT domain user with administrative rights
+			Write-LogMessage -type Error -MSG "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
+			Pause
+			Exit
+		}
 	}
 }
 
@@ -2521,6 +2591,9 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 	
 	# Check machine has no proxy configuration
 	CheckNoProxyRDS
+
+	# Check user is in Domain Users and Administrators group to configure remoteapp
+	remoteAppDomainUserPermissionsRDS
 	
 	if($gpoRDSerrorsfound -gt 0){
 		Write-LogMessage -type Warning -MSG "Please fix GPO RDS related errors first."
@@ -2544,8 +2617,19 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                 SetScheduledTask -taskName $taskNameNLA -TriggerType $TriggerAtStart -taskDescription $taskDescrNLA -action $actionNLA -AdminUsername SYSTEM
 
                 # Set Schedule Task to resume RDS install after user logs back in
-                SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
-
+				if($OutOfDomain)
+				{
+					# if script was ran with out of domain flag, we make sure to resume out of domain checks after restart
+					SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $ActionRDSoutOfDomain -AdminUsername $AdminUserName
+				}
+				Else
+				{
+					SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+				}
+                
+				
+				# Skip CPMConnectionTest since we're about to perform restart anyway.
+				$script:CPMConnectionTestSkip = $true
 		    	Write-LogMessage -type Warning -MSG "The server will restart to apply Microsoft Remote Desktop Services, press ENTER to continue."
 		    	Pause
                 Restart-Computer -Force
@@ -2588,7 +2672,17 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                     Write-LogMessage -type Warning -MSG " 2. Script will automatically resume after restart, press ENTER to continue."
                     # Set Schedule Task to resume RDS install after user logs back in
                     $AdminUserName = whoami
-                    SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+					if($OutOfDomain)
+					{
+						# if script was ran with out of domain flag, we make sure to resume out of domain checks after restart
+						SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $ActionRDSoutOfDomain -AdminUsername $AdminUserName
+					}
+					Else
+					{
+						SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+					}
+					# Skip CPMConnectionTest since we're about to perform restart anyway.
+					$script:CPMConnectionTestSkip = $true
                     pause
                     Restart-Computer -Force
                 }
@@ -3320,7 +3414,7 @@ if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationC
 			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
 			Remove-Item -Path "$PSCommandPath.OLD"
             $scriptPathAndArgs = "& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting -InstallRDS:$InstallRDS -DisableNLA:$DisableNLA -skipVersionCheck:$SkipVersionCheck -SkipIPCheck:$SkipIPCheck"
-			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script."
+			Write-LogMessage -Type Info -Msg "Finished Updating, please relaunch script."
 			Pause
 			Exit
 		}
@@ -3673,8 +3767,9 @@ else
         # Install RDS on the Initial Run
         checkIfPSMisRequired
 
-        # If VaultConnectivity passed, run CPM Test.
-        if($VaultConnectivityOK -eq $true){CPMConnectionTest}
+        # If VaultConnectivity passed, and no pending restart from InstallRDS, run CPM Test.
+        if(($VaultConnectivityOK -eq $true) -and ($null -eq $CPMConnectionTestSkip)){CPMConnectionTest}
+
 	} catch	{
 		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
 	}
@@ -3684,12 +3779,11 @@ Pause
 ###########################################################################################
 # Main end
 ###########################################################################################
-
 # SIG # Begin signature block
-# MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCgNHrE4tNUDbxZ
-# /xIJhvS2c/45z/33ZrvZjDB3OkN+KaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAZanuSFgwwREiu
+# C69FA57lRXq3/CY2rkP6V9GchPxqGKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3766,97 +3860,97 @@ Pause
 # l418MFn4EPQUqxB51SMihIcyqu6+3qOlco8Dsy1y0gC0Hcx+unDZPsN8k+rhueN2
 # HXrPkAJ2bsEJd7adPy423FKbA7bRCOc6dWOFH1OGANfEG0Rjw9RfcsI84OkKpQ7R
 # XldpKIcWuaYMlfYzsl+P8dJru+KgA8Vh7GTVb5USzFGeMyOMtyr1/L2bIyRVSiLL
-# 8goMl4DTDOWeMYIRRDCCEUACAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
+# 8goMl4DTDOWeMYIRRTCCEUECAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCA7
-# 7FmgG5TtMS9qty0agDPuSj/82svbd7PKPy8ZUD4PHTANBgkqhkiG9w0BAQEFAASC
-# AgAj73hTiH0lFvEkydk3k4tm6R1xt0dtwvFiCm/sqwY218yiNMefycSyVhxi8BsW
-# jfcFGuTw2J+ROadrRY8uif6I2L+QzW3faKP9rgXHc0yU9kIykRtZ5e8xPIqzzH0k
-# 23YdDJdF4srnEYeuAapMMQQa2LY3MEqxpVqjB6cQnY6L7S9iwikwmfVcPYqC1YWA
-# sBAyUF2L2GNOwlhM/LO5Rmfx29r2IWIHEkqCqX327+4qsTFHCwi29rLpW74ZCxDG
-# 1suXuttMABRjepWQhUzvA+hGG5JNRkZe1v26htztZiQkB3HakMeXfFFrsNLFszd3
-# 3mNsIfGKLRqMXP95wFlvg7cFV32u51xEzRcaZVb9K9TqwfeMGJmhPptaE1pvUEPE
-# tAQabznrpXnxF8jRLgyWKyxmnY7Ng1jEteQeS90dxhPAU7fWAOkfZASwkBW1XbGL
-# lSTZUdqYZ3DL761u2JS9z7CUURzpWpkZz4fOH8brte/+QAI1zC4YWwYwB7rqkcZ8
-# 953G8ESPOobsZHuLGe6tjGPsyelZGwofyapi+cunyr1kbv5euksWINLCFHlnjiWr
-# 9dXBU9fw7f5RwukbJdoo0XI7Jc6QYqTRTEX2NsjN6IJNCzKlp6KLHkTrUVFxS/UY
-# 3coy4WBxZclH1ldVnuyP1aV9qfBljV3V2hm7iiC8IV7icqGCDiswgg4nBgorBgEE
-# AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
-# BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBSFH73d/LhrIgkns1LBsAr+eGGyQgIUCP+OlbL3cyqdQBSgxFCb
-# EejXmj0YDzIwMjMwMjEzMTUyNDM3WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
-# UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
-# dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
-# U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
-# yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMxFzAVBgNVBAoT
-# DlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVzdCBOZXR3b3Jr
-# MTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZvciBhdXRob3Jp
-# emVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBD
-# ZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEy
-# MzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3Jh
-# dGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMf
-# U3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJKoZIhvcNAQEB
-# BQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawyjwVrhponADKX
-# ak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG50F8eRzLy60b
-# v9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45ncP0mqj0hOHE
-# 0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU1t/HgNuR7v68
-# kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6x
-# zPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4G
-# A1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1UdIARfMF0wWwYL
-# YIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9j
-# cHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYB
-# BQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5jb20wNgYDVR0f
-# BC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNhbC1yb290LmNy
-# bDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQ
-# VGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
-# HwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZIhvcNAQELBQAD
-# ggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZk
-# hHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBj
-# SDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZr
-# jfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv2uybGB+queM6
-# AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6ita
-# s5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWvuswHP6EBIwQi
-# QU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1h
-# bnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29y
-# azEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTAeFw0x
-# NzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsG
-# A1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRy
-# dXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBp
-# bmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCv
-# Doqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQgbTD53R2D6T8n
-# SjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMjdUdwDLNfW48I
-# HXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj
-# 0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEm
-# LP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48
-# A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8EAjAAMGYGA1Ud
-# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
-# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
-# cGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5zeW1hbnRlYy5j
-# b20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYD
-# VR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcwAYYeaHR0cDov
-# L3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9odHRwOi8vdHMt
-# YWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAoBgNVHREEITAf
-# pB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+F
-# zBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
-# DQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZycGMv41UpezlG
-# Tud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZ
-# EPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9EPEZcF1rjpDvV
-# aSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6aescixXTN30cJ
-# hsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GYFHIUJN/HESwf
-# AD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJaMIICVgIBATCB
-# izB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24x
-# HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
-# dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
-# YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjMwMjEzMTUyNDM3WjAvBgkqhkiG9w0BCQQxIgQg0UHH9EImlIem
-# ZfGTXLiFm/+d4+r26LZEyS/7Gu6wB0QwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
-# xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# AHgHaOeI95TFoGP9TnpcpVQtnnkdcZxi3ke2KAemMXp1iWImMWrSdfeClwcfQnaL
-# AGdICbCOYpYU5DlHEMrPKOaAdfkKixme5BY2YBjbZ4G8LqdS6mHHJFqX2QCT5tal
-# Lv98lze3TrZt9XOUAAcYeehCDBMmrlIyM76iFs6nyN1AI2DDT/+VXG5D6hDBc0Wz
-# Cms/6Ez5o0XI22ubHox+QeNV4WgK5geLp+AKDEZahSqk65rffMrxbZdJ6m62IGy9
-# rgF54h2LoH/XAnXQ5UftSDLaC6X5XStXWB6t3P+V+RGkK/ji6e9QQeGJb3kU/rmR
-# Ppgelf50tftsVWv0ie0+rXw=
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCBq
+# yBsHJ4MA7JDn96Q0Aiy2xz+mAsNdBaiY6WrEFbO2JTANBgkqhkiG9w0BAQEFAASC
+# AgCzkBTZHScAlaiesWWPDdEx9dAwTjMRieM1rZQhExfLdgrCQKmqIKNBm5r3QiJA
+# 2gLP+cmZzERb8B9KnC3oDAx1MgKgc/9bOhhm1Qzgtf6y6mxH/TyDg80xa3p0yHCm
+# vy2UK1zKWjD/Wx7Mk8LWr7IktX8olVcEf62irtSB6ZSsiJr94mTAviTLXSF4HXL3
+# WUro2hKLF8R2wNlNoEafa+8uJ0SAXNsBgnY11hMKkimwgt2yes13pKOS1vETP90T
+# MJROTYDVsUYtKPtdk8gTqezntmPe/+ldSeYHRDofNKttxVbRuhDKcLV0akShZJaH
+# BwT9e6TIjB5gwBfpWG+ggOvRqjT7t4VmGZ1cYYIT9/emGDftN7lEMsteqwqonkw/
+# OC8fyyWGjNDk4BBZ4wXGX0jMlMHyWT6Wya/5Vcdqv3KGQGHarz/dRCQFjbViYU2K
+# AlEt7WE5xjCo3NAgrU/mtykEvwK6kwfh56gENwx3czfACnZOu5qtL8rGndqCWo/F
+# 5OVuD2MVhAzIHwuaSk2CMKje97S+Xe+VoHNu0MgqxZDMEFSKZMNIOUzuXTvzABeb
+# MTmgCxXRxDVIrn5xfLqgC5NVNeruuMnOENqk/mdpaELN2LkT3fsWIFdujtvAfBHK
+# WTzPCupOlNIWELr/H9YNHA2NwzcW3AWbVBWko6AB26fte6GCDiwwgg4oBgorBgEE
+# AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
+# BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
+# BgUrDgMCGgUABBRaZlGb/gJB13gGkGDkvoduPjsLNgIVALEs8/7lYvhdLgeMuI1Z
+# QgwKr5rrGA8yMDIzMDMwODAwNDc0OVowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
+# VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
+# bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
+# ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
+# 98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAwgb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQK
+# Ew5WZXJpU2lnbiwgSW5jLjEfMB0GA1UECxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29y
+# azE6MDgGA1UECxMxKGMpIDIwMDggVmVyaVNpZ24sIEluYy4gLSBGb3IgYXV0aG9y
+# aXplZCB1c2Ugb25seTE4MDYGA1UEAxMvVmVyaVNpZ24gVW5pdmVyc2FsIFJvb3Qg
+# Q2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMTYwMTEyMDAwMDAwWhcNMzEwMTEx
+# MjM1OTU5WjB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9y
+# YXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMT
+# H1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEB
+# AQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+djHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAy
+# l2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4Yht+66YH4t5/Xm1AONSRBudBfHkcy8ut
+# G7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9ITh
+# xNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+
+# vJJXcnf0zajM/gn1kze+lYhqxdz0sUvUzugJkV+1hHk1inisGTKPI8EyQRtZDqk+
+# scz51ivvt9jk1R1tETqS9pPJnONI7rtTDtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAO
+# BgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsG
+# C2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20v
+# Y3BzMCUGCCsGAQUFBwICMBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMC4GCCsG
+# AQUFBwEBBCIwIDAeBggrBgEFBQcwAYYSaHR0cDovL3Muc3ltY2QuY29tMDYGA1Ud
+# HwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5j
+# cmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMT
+# EFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0OBBYEFK9j1sqjToVy4Ke8QfMpojh/gHVi
+# MB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUA
+# A4IBAQB16rAt1TQZXDJF/g7h1E+meMFv1+rd3E/zociBiPenjxXmQCmt5l30otlW
+# ZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQ
+# Y0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NXQZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72
+# a433Snq+8839A9fZ9gOoD+NT9wp17MZ1LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnj
+# OgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g/idtFDL8P5dA4b+ZidvkORS92uTTw+or
+# WrOVWFUEfcea7CMDjYUq0v+uqWGBMIIFSzCCBDOgAwIBAgIQe9Tlr7rMBz+hASME
+# IkFNEjANBgkqhkiG9w0BAQsFADB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3lt
+# YW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdv
+# cmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcN
+# MTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAb
+# BgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBU
+# cnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1w
+# aW5nIFNpZ25lciAtIEczMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA
+# rw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQnP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/
+# J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRokKPgbclE9yAmIJgg6+fpDI3VHcAyzX1uP
+# CB1ySFdlTa8CPED39N0yOJM/5Sym81kjy4DeE035EMmqChhsVWFX0fECLMS1q/Js
+# I9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS41dsIr9Vf2/KBqs/SrcidmXs7DbylpWB
+# Jiz9u5iqATjTryVAmwlT8ClXhVhe6oVIQSGH5d600yaye0BTWHmOUjEGTZQDRcTO
+# PAPstwDyOiLFtG/l77CKmwIDAQABo4IBxzCCAcMwDAYDVR0TAQH/BAIwADBmBgNV
+# HSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5z
+# eW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBzOi8vZC5zeW1jYi5jb20v
+# cnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMu
+# Y29tL3NoYTI1Ni10c3MtY2EuY3JsMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4G
+# A1UdDwEB/wQEAwIHgDB3BggrBgEFBQcBAQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6
+# Ly90cy1vY3NwLndzLnN5bWFudGVjLmNvbTA7BggrBgEFBQcwAoYvaHR0cDovL3Rz
+# LWFpYS53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEw
+# H6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamf
+# hcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQYMBaAFK9j1sqjToVy4Ke8QfMpojh/gHVi
+# MA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/wuKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5
+# Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s702K/SpQV5oLbilRt/yj+Z89xP+YzCdmi
+# WRD0Hkr+Zcze1GvjUil1AEorpczLm+ipTfe0F1mSQcO3P4bm9sB/RDxGXBda46Q7
+# 1Wkm1SF94YBnfmKst04uFZrlnCOvWxHqcalB+Q15OKmhDc+0sdo+mnrHIsV0zd9H
+# CYbE/JElshuW6YUI6N3qdGBuYKVWeg3IRFjc5vlIFJ7lv94AvXexmBRyFCTfxxEs
+# HwA/w0sUxmcczB4Go5BfXFSLPuMzW4IPxbeGAk5xn+lmRT92MYICWjCCAlYCAQEw
+# gYswdzELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9u
+# MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
+# bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
+# CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
+# hvcNAQkFMQ8XDTIzMDMwODAwNDc0OVowLwYJKoZIhvcNAQkEMSIEIDeVXP0DJkQ+
+# UQUlwHxsf0FVP0HZmvJBCcYR1/RVfqLZMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
+# IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
+# AQCprEnnhIqTXm4Sy6F/G/k2HfcH9V3UcG+5lkKy/QSdRpZgTDr9aXNAy81BATuV
+# nFx7k6YRgt4COwv7Y9xp7yV4vxluD1cO9SH2R5TUnZSXQpT5XrWWSlTyhRGocIo4
+# vzim6hrS9MW2NQ0t78IOI1LhSQkb+vnQJ+av/8UiTx4++lgXLEs4DYYSoMrubvjS
+# 0muFU3XA7eavqKf4GQqa5dsn5GpCjyy1vI7lcGgR/2wQgu6juimXvuuEMMX+CC4U
+# oyG5WGhtABUscFIC3QJYlmt5ay/H/QEcn5EDZHwYsfD7HGL/Km1dr6K7z4S5Obob
+# TTvH+D1Mck9imtoS8zXHNd3r
 # SIG # End signature block
