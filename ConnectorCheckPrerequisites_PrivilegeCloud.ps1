@@ -77,6 +77,7 @@ $arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix","remoteApp
 $arrCheckPrerequisitesGeneral = @(
 "VaultConnectivity", #General
 "CustomerPortalConnectivity", #General
+"CheckIdentityCustomURL",
 "OSVersion", #General
 "Processors", #General
 "Memory", #General
@@ -112,12 +113,13 @@ $arrCheckPrerequisitesCPM = @(
 "CRLConnectivity" #CPM
 )
 
-# TBA next version
-$arrCheckIdentityPrerequisites = @(
-"IdentityIdaptiveApp", #Identity
-"IdentityTruste", #Identity
-"IdentityVerisign", #Identity
-"IdentityGlobalSign" #Identity
+
+$arrCheckConnectorManagementPrerequisites = @(
+"ConnectorManagementApp", #CM
+"ConnectorManagementRepoScripts", #CM
+"ConnectorManagementRepoAssets", #CM
+"ConnectorManagementIOT" #CM
+"ConnectorManagementAWSRegistry" #CM
 )
 
 
@@ -130,7 +132,7 @@ If ($POC){
 	$arrCheckPrerequisitesGeneral += $arrCheckPrerequisitesPOC
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel}#,@{IdentityISPSS = $arrCheckIdentityPrerequisites}
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel}#,@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
 
 
 ## List of GPOs to check
@@ -158,7 +160,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "17"
+[int]$versionNumber = "19"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -601,22 +603,17 @@ Function OSVersion
 	param ()
 	try{
 		Write-LogMessage -Type Verbose -Msg "Starting OSVersion..."
-		$actual = (Get-WmiObject Win32_OperatingSystem).caption
+		$actual = (Get-CimInstance Win32_OperatingSystem).caption
 		$errorMsg = ""
 		$result = $false
 		
-		If($actual -Like '*2016*' -or $actual -like '*2019*')
+		If($actual -Like '*2016*' -or $actual -like '*2019*' -or $actual -like '*2022*')
 		{
 			$result = $true
 		}
 		elseif($actual -Like '*2012 R2*')
 		{
-			$errorMsg = "Privileged Cloud installation must be run on Windows Server 2016/2019."   
-			$result = $false
-		}
-		elseif($actual -like '*2022*')
-		{
-			$errorMsg = "Detected OS 2022, only CPM can be installed on it. PSM is not yet supported."
+			$errorMsg = "Privileged Cloud installation must be run on Windows Server 2019+."   
 			$result = $false
 		}
 		else
@@ -694,7 +691,7 @@ Function IPV6
 		$result = $false
 		$errorMsg = ""
 	
-		$arrInterfaces = (Get-WmiObject -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
+		$arrInterfaces = (Get-CimInstance -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
 		$IPv6Status = ($arrInterfaces | Where-Object { $_.contains("::") }).Count -gt 0
 
 		if($IPv6Status)
@@ -1195,7 +1192,7 @@ Function ServerInDomain
 		Write-LogMessage -Type Verbose -Msg "Starting ServerInDomain..."
 		$result = $false
     
-		if ((Get-WmiObject win32_computersystem).partofdomain) 
+		if ((Get-CimInstance win32_computersystem).partofdomain)
 		{
 			  $actual = "In Domain"
 			  $result = $true
@@ -1295,7 +1292,7 @@ Function PendingRestart
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
 		# SCCM always returns a value back, so we check it's not true instead.
-		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
+		$wmiClientUtilities = (Invoke-CimMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
 		$chkComponentBasedServicing = ($null -ne $regComponentBasedServicing)
 		$chkWindowsUpdate =	($null -ne $regWindowsUpdate)
@@ -1342,7 +1339,7 @@ Function PendingRestartRDS
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
 		# SCCM always returns a value back, so we check it's not true instead.
-		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
+		$wmiClientUtilities = (Invoke-CimMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
 		$chkComponentBasedServicing = ($null -ne $regComponentBasedServicing)
 		$chkWindowsUpdate =	($null -ne $regWindowsUpdate)
@@ -1521,7 +1518,7 @@ Function GPO
 		$errorMsg = $g_SKIP
 		if(!$compatible)
 		{
-			 $actual = "Not Compatible"
+			 $actual = "RDS will fail"
 			 $result = $false
 		}
 		else
@@ -1533,7 +1530,7 @@ Function GPO
 	}
 
 	return [PsCustomObject]@{
-		expected = "PSM Compatible";
+		expected = "RDS will succeed";
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
@@ -1622,7 +1619,7 @@ Function ConsoleHTTPConnectivity
 			}
             elseif ($_.Exception.Response.StatusCode.value__ -eq 400)
 			{
-				$errorMsg = "Unable to GET to '$connectorConfigURL' did you type it correctly?"
+				$errorMsg = "Unable to GET to '$connectorConfigURL' did you mistype CustomerId?"
 				$result = $false
 				$actual = $_.Exception.Response.StatusCode.value__
 			}
@@ -2230,6 +2227,82 @@ Function MachineNameCharLimit()
 }
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: CheckIdentityCustomURL
+# Description....: Checks with a dummy account if identity vanity url is enabled. (Expected false, since not supported in privcloud yet).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function CheckIdentityCustomURL{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = $true
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+
+    $portalSubDomainURL = $portalURL.Split(".")[0]
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($portalSubDomainURL)){
+        Try{
+        	# PlatformParams
+	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
+	    	# Platform Identity API
+	    	$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue -ErrorVariable identityErr -UseBasicParsing
+	    	$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
+	    	
+	    	$IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
+	    	$IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
+	    	$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
+	    	$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
+
+	    	# Begin Start Authentication Process
+            $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
+	    	$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = "TestDummyPrereqScript" ; Version = "1.0"} | ConvertTo-Json -Compress
+	    	$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30 -ErrorVariable identityErr
+	    	
+            if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
+            {
+                $actual = $true
+                $result = $true
+
+            }
+            Else
+            {
+                # Tenant has Custom URL enabled, we don't support it yet.
+                if($IdaptiveResponse.Result.PodFqdn){
+                    $actual = $false
+                    $result = $false
+                    $errorMsg = "It looks like you have configured customized URL in Identity Administration, please disable it and try again (more info here: https://docs.cyberark.com/Product-Doc/OnlineHelp/Idaptive/Latest/en/Content/GetStarted/CustomDomain.htm)."
+                }
+                Else
+                {
+                    # catch all other errors, just display whatever we see in result.
+                    $actual = $IdaptiveResponse.Result
+                }                
+            }
+        }
+        Catch
+        {
+            $errorMsg = $identityErr.message
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty"
+		$errorMsg = "Host name empty"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: CheckNoProxy
 # Description....: Checks proxy configuration, required direct access for RDS deployment
 # Parameters.....: None
@@ -2276,7 +2349,7 @@ Function CheckNoProxy()
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: CheckNoProxyRDS
-# Description....: Checks proxy configuration, required direct access for RDS deployment
+# Description....: Checks proxy configuration, requires direct access for RDS deployment
 # Parameters.....: None
 # Return Values..: True/False
 # =================================================================================================================================
@@ -2285,7 +2358,7 @@ Function CheckNoProxyRDS()
 	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
 	if(-not($(netsh winhttp show proxy)) -match "Direct access")
 	{
-		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`" to disable run `"netsh winhttp reset proxy`""
+		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script (you can re-enable after RDS is complete). Run `"netsh winhttp show proxy`" to see current config, to disable run `"netsh winhttp reset proxy`""
 		Pause
 		Exit
 	}
@@ -2312,6 +2385,7 @@ Function remoteAppDomainUserPermissions()
 		$errorMsg = ""
         $expected = $true
 
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
 		$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 		$WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
 
@@ -2321,7 +2395,7 @@ Function remoteAppDomainUserPermissions()
 			# NOT domain user with administrative rights
 			$actual = $false
 			$result = $False
-			$errorMsg = "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
+			$errorMsg = "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect). If the user is from a different domain, this error will not go away, but as a workaround, after PSM is installed, perform the actions described here: https://cyberark-customers.force.com/s/article/Publish-PSMInitSession-as-a-RemoteApp-Program"
 			$expected = $true
 		}
 		Else{
@@ -2350,6 +2424,7 @@ Function remoteAppDomainUserPermissionsRDS()
 	# if script was ran with outofdomain flag we need to skip this test.
 	if(-not ($OutOfDomain)){
 		Write-LogMessage -Type Info -Msg "Checking current windows user has permissions to configure remoteApp..." -Early
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
 		$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 		$WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
 
@@ -2357,9 +2432,9 @@ Function remoteAppDomainUserPermissionsRDS()
     	($WindowsPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator") -eq $False))
 		{
 			# NOT domain user with administrative rights
-			Write-LogMessage -type Error -MSG "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
+			Write-LogMessage -type Error -MSG "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect). If the user is from a different domain, this error will not go away, but as a workaround, after PSM is installed, perform the actions described here: https://cyberark-customers.force.com/s/article/Publish-PSMInitSession-as-a-RemoteApp-Program"
+            Write-LogMessage -type Warning -MSG "We will proceed with install, but remember to fix this issue after PSM component is successfully installed if you want to enjoy RemoteApp features."
 			Pause
-			Exit
 		}
 	}
 }
@@ -2659,7 +2734,7 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 			    if (-not (IsLoginWithDomainUser))
 			    {
 					# if the computer is in a domain and the user is local, display relevant message
-					if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
+					if ((Get-CimInstance -Class Win32_ComputerSystem).PartOfDomain)
 					{
 						Write-LogMessage -type Warning -MSG "Machine is in domain but you are logged in with a local user, login with a domain user and rerun the script to complete RDS CB Install."
 						Pause
@@ -2729,12 +2804,19 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 
                         #disable NLA just in case it comes back.
                         Disable-NLA
-                        		 				 
-                        Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
+
+                        $ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
+
+                        if($ConnectionBrokerFeature.Installed -eq $true){
+                            Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
+                        }
+                        Else{
+                            Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role, fix errors and rerun script."
+                        }
                     }
 			        catch
 			        {
-					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role"
+					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role, fix errors and rerun script."
 			        }
                 }
 			    else
@@ -2831,7 +2913,7 @@ function Disable-NLA()
 {
     # Disable NLA
     Write-LogMessage -type Info -MSG "Disabling NLA..." -Early
-    $disableNLA = (Get-WmiObject -Class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices -ComputerName $env:COMPUTERNAME -Filter "TerminalName='RDP-tcp'").SetUserAuthenticationRequired(0)
+    $disableNLA = get-CimInstance "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices -Filter 'TerminalName = "RDP-Tcp"' | Invoke-CimMethod -MethodName SetUserAuthenticationRequired -Arguments @{UserAuthenticationRequired = 0}
 
     # Remove scheduled Task so we don't run it infinitely.
     UnsetScheduledTask -taskName $taskNameNLA
@@ -2992,7 +3074,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
      Pause
      Return
  }
- if((Get-WmiObject -Class win32_product | where {$_.Name -like "Microsoft Visual C++ 2013 x86*"}) -eq $null){
+ if((Get-CimInstance -Class win32_product | where {$_.Name -like "Microsoft Visual C++ 2013 x86*"}) -eq $null){
     $CpmRedis = "$VaultOperationFolder\vcredist_x86.exe"
     Write-LogMessage -type Info -MSG "Installing Redis++ x86 from $CpmRedis..." -Early
     Start-Process -FilePath $CpmRedis -ArgumentList "/install /passive /norestart" -Wait
@@ -3070,9 +3152,8 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
                 Write-LogMessage -type Warning -MSG "2) Logs folder was zipped (Use for Support Case): `"$ZipToupload.zip`""
                 [int]$lasthint = 4
                 If($stdout -match "ITACM040S"){
-                    [int]$lasthint = $lasthint+1
-                    Write-LogMessage -type Warning -MSG "3) Hint: Communication over 1858/TCP is required to utilize sticky session and maintain the same source IP for the duration of the session."
-                    Write-LogMessage -type Warning -MSG "4) In case of PA FW or similar configuration check out this page: "
+                    # [int]$lasthint = $lasthint+1
+                    Write-LogMessage -type Warning -MSG "3) In case of PA FW or similar configuration check out this page: "
                     Write-LogMessage -type Warning -MSG "   https://docs.cyberark.com/Product-Doc/OnlineHelp/PrivCloud-SS/Latest/en/Content/Privilege%20Cloud/Priv-Cloud-Firewall-setup.htm"
                 }
                 Else{
@@ -3408,6 +3489,7 @@ if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationC
 	Catch
 	{
 		Write-LogMessage -Type Info -Msg "Test-VersionUpdate: Couldn't check for latest version, probably DNS/FW Issue: $(Collect-ExceptionMessage $_.Exception.Message)" -Early
+        return # no need to run the rest if can't reach git.
 	}
 
 	If ($checkVersion -gt $versionNumber)
@@ -3796,8 +3878,8 @@ Pause
 # SIG # Begin signature block
 # MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCApk+Lfan9v0QU+
-# K9s+OQOPkBCMSeDwoDscj2z/Jeg7r6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCC+3RJZxrmvLZE
+# TR0zcpo9l4bLQYdCxPSuXumVlhevZ6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -3932,22 +4014,22 @@ Pause
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIBGf6m/EMhfAs+YmCqVCzs3XDPDu+f2+LDvXR26lCZj/MA0GCSqGSIb3
-# DQEBAQUABIICAL+5beyMhffJTZQHlEyOK6nb/1NdByhVmmYrnPkbfhNdTdJycFNb
-# mrbni3xqOINE/d0IMOPFzYsrXmwRGcuERCiHaSZKuj0Aps9Z7WYsstw5u1lcTvHZ
-# R/YTpxwKLBULtspaeSGryvOM4klBWJ2NU7/WtzKZMUUPsHzgwBNB2NZKxRZNOlpG
-# 8m0sSN9bWacZ01eZl2i/jgjEEbMzfxqkY/ydX0fTZkk5gSe8z7PxWCfBZwXVIoPw
-# aEtYvwEl5a3BdyZRZVP4VdLGjkym7bLbtWPWROmnByrUuAwTQLFUZ+RJieXZsh3j
-# SMUD3fH0TK8EdyWUBs0di+iMJ6lHDSSvdVJzP4RC2p6BlvBqkCLznaYC5Adit3Hf
-# JSsx8zAiFHHozfGZmLWPRRf0W84wuyglYfyJ7VYVOLserfUlaiXRyzsNMyFYNm7d
-# GZiCJ3Du910hMJjXig0B/by81SSRwzoO6p6cPT6hrRxtNRfoOi0ZG/pImUrGsAnG
-# AgUOJy9hrkIe9cHm2NO/AeVePJ0regEMlQkLMbzmR8cLnCaSr1ITkR7R8Qiyk1At
-# Ao3jq/7TrGNnPTx5NfyFHTOhgBHiHxjS8bVflwqMvy42Ji97JuR4fbhXS/+h+4iV
-# pDdpzRE0JTrqx+5THAA1s0W/n8irU2hFjpG1tV/bPwn+we8S5zQY1goroYIOLDCC
+# AQkEMSIEIBuYcRbg0AJSwkTvylSFTK0Hl17ZuupaGe+7NIA5QlTzMA0GCSqGSIb3
+# DQEBAQUABIICANlqbjWXJe5+uEte79UnQOGozuPQjDlFL+TkpJQ2zPLn7Y0OgSHs
+# zNpU+NZ0mO1StuJJvWLdgNhbR5szxfpRiLpO6o01Yj3vz3GDpntOlbLimtArAhQp
+# DmUAd2IalGUtHN2HfseVRbLN1d31nMdE7bCjq1DKq+yMB1FjZmZmOGpYedT0D8gw
+# pxokG6eMjl1foBdzl2kp7LU5KYGv/eNE4OqwH9kWgTUqcIxpNQ7/Ffn6E8stTNj7
+# F4ITZYR5dvCOtLIsb5XsUoeLr5MEbZuywnezJRT2ygoMRxKUkAZA8WY/3Bf7f8Nv
+# cw8/ZzvyBETLjY9UTUloy/SnwHEE8EHsSRU6sFJCm20bjVZnc/5jy0j9XQwSl++E
+# D5M1HVU8gqEMghl3T81xBa/JY/SxLOiNCm5jZILIKRs0SlrJx3UKtNoUEO1CWhou
+# rnkCsI1ImQ9A5Nbrxd2cZ7QyH9d2gL5wLtOPLjnRZJH4QhLC/GaKbeRs59nOYTOb
+# ws6epnz2sjc57bMCCM0aKSBiXfv3GL9x8hpTpS1izF2yBtfArtyhivM3j1/bHdHA
+# ElSSvA5JZtSs1mgpJpX69nLoAqEuqxX/k1/LqfjYghwGkreo4bncDbS6bIHITB65
+# ntN0Na0BOGvSHw8ic/dz/NW8k88jhb3GOYNXEk7D+UPvFMseZZDiiCvIoYIOLDCC
 # DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
 # BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFPcd8Ex2Y4rUxOr5gikIy1T713f9AhUA//Vp/qgM
-# 6vI3q28Ayu6QMNNoxl0YDzIwMjMwMzE1MTcxODU5WjADAgEeoIGGpIGDMIGAMQsw
+# AQcXAzAhMAkGBSsOAwIaBQAEFLKRIWQ/SYMZjOJRRKkW8gh4ifdjAhUAv1d4wyYi
+# kCwjycLOuLV4X48CvoYYDzIwMjMwNjIzMTQxOTEwWjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -4011,13 +4093,13 @@ Pause
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjMwMzE1MTcxODU5WjAvBgkqhkiG9w0BCQQxIgQg
-# sC1Gy43EuWrrBQ9HSm+qA9DzwUM7u+tJUe7ZBVQtHwwwNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjMwNjIzMTQxOTEwWjAvBgkqhkiG9w0BCQQxIgQg
+# Cva39kOCTa8rdRTGpbxKXDK45u78yzwdQDg8SloFNIMwNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBABspFKMyi4yt+VO7tpMBwP2zYBrfd/QVLaMVZuduAN4ZAxCBgb23
-# HSamJ7l2FHhd1zRFtPwaktaQrnBm9A3/xA4Qk4w0R/5wpac+/HEf8QUyCA9xDgyI
-# aCRCz3kjJHTEbuwunfg3m8vteSlzkUagYw9JSqTvmzgDLSL3qedbMDMye0FEWAB+
-# KkTtH2dC/6cDKCdoQtZ4V0s5iNQTMugpf2vZk3zmTSct407ObycxAu6C4/ki2W4a
-# pYuRyAe9+ElrylEahYHCr8K8oPqAa2JvRH+A9B5uOdoza5vYly+tqnPBv1Jr/ZR8
-# lo4TYXTo9t0GnE80Vj0Nk8BdGKynHWuJO9U=
+# hvcNAQEBBIIBAIukT+cta7wStYF5mz4MMUA6WgQJxl25iEY3ZkENmLdV1TKyof4d
+# Uruic8zjGgkXpdmr9XpxGTxfG7pfsDFk4WPRC8WRbEJGLXGGgd/AhJsEP+MFOcKl
+# w8WlEL90gwEMLtKfLwpcdLSW3cyhxsoBdiI923vjwN/gL4+pCjKTohfRxsUf6/Z5
+# N4IxoFDnjSzSonTya7VvqjJP4FkiW+g3iQY8LtzOtJORQ4oNgTp6kfqzcstUalRp
+# X8D7mihZHGiDsyETwr1wcNHx/GsjwZvm3b5frY+q4J7nVBXN5EDXjCeHRIUB02xV
+# PNdvdGocEb/IIWp+llrk6kUzD4OnVrS53MU=
 # SIG # End signature block
