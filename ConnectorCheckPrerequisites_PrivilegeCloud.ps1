@@ -115,11 +115,10 @@ $arrCheckPrerequisitesCPM = @(
 
 
 $arrCheckConnectorManagementPrerequisites = @(
-"ConnectorManagementApp", #CM
-"ConnectorManagementRepoScripts", #CM
-"ConnectorManagementRepoAssets", #CM
+"ConnectorManagementScripts", #CM
+"ConnectorManagementAssets", #CM
+"ConnectorManagementComponentRegistry", #CM
 "ConnectorManagementIOT" #CM
-"ConnectorManagementAWSRegistry" #CM
 )
 
 
@@ -132,7 +131,7 @@ If ($POC){
 	$arrCheckPrerequisitesGeneral += $arrCheckPrerequisitesPOC
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel}#,@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
 
 
 ## List of GPOs to check
@@ -160,7 +159,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "19"
+[int]$versionNumber = "21"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -190,6 +189,20 @@ $global:taskNameDisableRDS = "CompleteRDSInstallAfterRestart"
 $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
 $g_SKIP = "SKIP"
+
+# Supported AWS Regions
+$script:availableRegions = @(
+    [pscustomobject]@{RegionName = "US East" ; RegionCode = "us-east-1" ; Description = "Virginia"} # Virginia
+    [pscustomobject]@{RegionName = "Canada" ; RegionCode = "ca-central-1" ; Description = "Montreal"} # Montreal
+    [pscustomobject]@{RegionName = "Frankfurt" ; RegionCode = "eu-central-1" ; Description = "Frankfurt"} # Frankfurt
+    [pscustomobject]@{RegionName = "London" ; RegionCode = "eu-west-2" ; Description = "London"} # London
+    [pscustomobject]@{RegionName = "Eu South" ; RegionCode = "eu-south-1" ; Description = "Milan" } # Milan
+    [pscustomobject]@{RegionName = "AP Southeast" ; RegionCode = "ap-southeast-1" ; Description = "Singapore"} # Singapore
+    [pscustomobject]@{RegionName = "Sydney" ; RegionCode = "ap-southeast-2" ; Description = "Sydney"} # Sydney
+    [pscustomobject]@{RegionName = "Tokyo" ; RegionCode = "ap-northeast-1" ; Description = "Tokyo"} # Tokyo
+    [pscustomobject]@{RegionName = "Asia Pacific" ; RegionCode = "ap-south-1" ; Description = "Mumbai"} # Mumbai
+    [pscustomobject]@{RegionName = "Jakarta" ; RegionCode = "ap-southeast-3" ; Description = "Jakarta"} #Placeholder
+)
 
 
 #region Troubleshooting
@@ -267,6 +280,14 @@ Function TestIdentityServiceAccount(){
 		$portalSubDomainURL = $PlatformTenantId.Split(".")[0]
 	}
 	Try{
+
+		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		if($($creds.GetNetworkCredential().Password) -match ' '){
+			Write-Host "Your password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
+			Write-Host "Remove it and try again." -ForegroundColor Yellow
+			Pause
+			Exit
+		}
 	
 		#PlatformParams
 		$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
@@ -281,19 +302,13 @@ Function TestIdentityServiceAccount(){
 		$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
 		$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
 		$LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
-		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
-		if($($creds.GetNetworkCredential().Password) -match ' '){
-			Write-Host "Your password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
-			Write-Host "Remove it and try again." -ForegroundColor Yellow
-			Pause
-			Exit
-		}
+
 
 		#Begin Start Authentication Process
 		Write-LogMessage -type Info -MSG "Begin Start Authentication Process: $startPlatformAPIAuth" -Early
         $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
 		$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
-		$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30
+		$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10
 		$IdaptiveResponse.Result.Challenges.mechanisms
 		
         if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
@@ -331,7 +346,8 @@ Function TestIdentityServiceAccount(){
 	
 	}catch
 	{
-		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri))"
+        Write-Host "Final Identity Result: Failed!" -ForegroundColor Red
 	}
 		#### Check against PVWA Directly, sometimes the shadowuser can be suspended/disabled in the vault but will be fine in identity. ####
 
@@ -367,7 +383,7 @@ Function TestIdentityServiceAccount(){
 			$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader
 		}Catch
 		{
-			Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+            Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri))"
             Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
 			#Lets check if identity was ok, then if vault is not, we know the pw is correct but user is most likely suspended/disabled.
 			if(($AnswerToResponse.Result.Summary -eq "LoginSuccess") -and ($pvwaResp -like "*Authentication failure*")){
@@ -1596,40 +1612,46 @@ Function ConsoleHTTPConnectivity
 		$errorMsg = ""
 		
 		$CustomerGenericGET = 0
-		Try{
-			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=$CustomerId&configItem=environmentFQDN"
-			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
-			If($null -ne $CustomerGenericGET.config)
-			{
-				$actual = "200"
-				$result = $true
-			}
-		} catch {
-			if ($_.Exception.Message -eq "Unable to connect to the remote server")
-			{
-				$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL' Try it from your browser."
-				$result = $false
-				$actual = $_.Exception.Response.StatusCode.value__
-			}
-			elseif ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
-			{
-				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL' Try it from your browser." 
-				$result = $false
-				$actual = $_.Exception.Response.StatusCode.value__
-			}
-            elseif ($_.Exception.Response.StatusCode.value__ -eq 400)
-			{
-				$errorMsg = "Unable to GET to '$connectorConfigURL' did you mistype CustomerId?"
-				$result = $false
-				$actual = $_.Exception.Response.StatusCode.value__
-			}
-			else
-			{
-				$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
-				$result = $false
-				$actual = $_.Exception.Response.StatusCode.value__
-			}
-		}		
+
+        If(![string]::IsNullOrEmpty($CustomerId)){
+		    Try{
+		    	$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=$CustomerId&configItem=environmentFQDN"
+		    	$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
+		    	If($null -ne $CustomerGenericGET.config)
+		    	{
+		    		$actual = "200"
+		    		$result = $true
+		    	}
+		    } catch {
+		    	if ($_.Exception.Message -eq "Unable to connect to the remote server")
+		    	{
+		    		$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL' Try it from your browser."
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+		    	elseif ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
+		    	{
+		    		$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL' Try it from your browser." 
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+                elseif ($_.Exception.Response.StatusCode.value__ -eq 400)
+		    	{
+		    		$errorMsg = "Unable to GET to '$connectorConfigURL' did you mistype CustomerId?"
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+		    	else
+		    	{
+		    		$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+		    }
+        }
+        Else{
+		    $errorMsg = "Skipping this test since CustomerId is empty"
+        }	
 		
 		Write-LogMessage -Type Verbose -Msg "Finished ConsoleHTTPConnectivity"
 		
@@ -1875,7 +1897,7 @@ Function Memory
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: SQLServerPermissions
-# Description....: Required SQL Server permissions
+# Description....: Required SQL Server permissions for successful RDS install on OS 2016, not relevant from 2019+.
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1883,12 +1905,16 @@ Function SQLServerPermissions
 {
 	[OutputType([PsCustomObject])]
 	param ()
-	try{
 		Write-LogMessage -Type Verbose -Msg "Starting SQLServerPermissions..."
 		$actual = ""
 		$result = $False
 		$errorMsg = ""
 
+        $OS = (Get-CimInstance Win32_OperatingSystem).caption
+
+    # Check if we are on 2016, other OS don't need this check.
+  if($OS -Like '*2016*'){
+    Try{
 		$SecPolGPO = @{
 			"SeDebugPrivilege" = "Debug Programs";
 			"SeBackupPrivilege" = "Back up files and directories";
@@ -1939,6 +1965,10 @@ Function SQLServerPermissions
 	} catch {
 		$errorMsg = "Could not check SQL Server permissions. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
+  }Else{
+    $actual = $True
+    $result = $True
+  }
 		
 	return [PsCustomObject]@{
 		expected = $True;
@@ -2076,7 +2106,7 @@ Function Test-NetConnectivity
 		[string]$ComputerName,
 		[int]$Port
 	)
-	$errorMsg = ""
+	$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
 	$result = $False
 	If(![string]::IsNullOrEmpty($ComputerName)) # -and ![string]::IsNullOrEmpty($portalSubDomainURL))
 	{
@@ -2091,8 +2121,9 @@ Function Test-NetConnectivity
 				}
 				Else { 
                      $result = $True
-                     # if port 1858, indicating vault test, declate param so we can use it in CPMConnectionTest.
+                     # if port 1858, indicating vault test, declare param so we can use it in CPMConnectionTest.
                      if($port -eq 1858){$script:VaultConnectivityOK = $True}
+                     $errorMsg = ""
                      }
 			}
 			Else
@@ -2108,6 +2139,7 @@ Function Test-NetConnectivity
 					{
 						$tcpClient.Close()
 						$result = $True
+                        $errorMsg = ""
 					}
 					else
 					{
@@ -2173,7 +2205,7 @@ Function GetPublicIP()
 	try{
 		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP..." -Early
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
-		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
+		$PublicIP | Out-File "_$($env:COMPUTERNAME) PublicIP.txt"
 		Write-LogMessage -Type Success -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
 		return $PublicIP
 	}
@@ -2236,6 +2268,8 @@ Function CheckIdentityCustomURL{
 	[OutputType([PsCustomObject])]
 	param ()
 
+    Write-LogMessage -Type Verbose -Msg "Starting CheckIdentityCustomURL..."
+
     $expected = $true
     $result = $false
     $errorMsg = ""
@@ -2260,7 +2294,7 @@ Function CheckIdentityCustomURL{
 	    	# Begin Start Authentication Process
             $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
 	    	$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = "TestDummyPrereqScript" ; Version = "1.0"} | ConvertTo-Json -Compress
-	    	$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30 -ErrorVariable identityErr
+	    	$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10 -ErrorVariable identityErr
 	    	
             if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
             {
@@ -2282,10 +2316,11 @@ Function CheckIdentityCustomURL{
                     $actual = $IdaptiveResponse.Result
                 }                
             }
+        Write-LogMessage -Type Verbose -Msg "Finished CheckIdentityCustomURL..."
         }
         Catch
         {
-            $errorMsg = $identityErr.message
+            $errorMsg = $identityErr.message + $_.exception.status + $_.exception.Response.ResppnseUri.AbsoluteUri
         }
     }
 	Else
@@ -2299,6 +2334,280 @@ Function CheckIdentityCustomURL{
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
+	}
+}
+
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementScripts
+# Description....: Check connectivity to CM(+AWS S3 bucket, IOT).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function ConnectorManagementScripts{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementScripts..."
+
+
+    $portalSubDomainURL = $portalURL.Split(".")[0]
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($portalSubDomainURL)){
+        Try{
+        	# PlatformParams
+	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
+	    	# Platform Identity API
+	    	$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue -UseBasicParsing -ErrorVariable respErr 
+	    	$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
+	    	
+            # Find Identity Region
+            $GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
+
+            # Select region Name, so we can match it vs exception regions below
+            $searchRegion = $GetTenantDetails.Result.Region
+
+            # Special expection for CM regions operated elsewhere.
+            if($searchRegion -eq "Eu South"){
+                $searchRegion = "Frankfurt"
+            }
+            # Special expection for CM regions operated elsewhere.
+            if($searchRegion -eq "Jakarta"){
+                $searchRegion = "Singapore"
+            }
+
+            # Match region from list and get region code.
+            $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion} | select -ExpandProperty regionCode
+
+            if([string]::IsNullOrEmpty($region)){
+                Write-LogMessage -Warning -msg "Couldn't retrieve region from https://$($IdentityHeaderURL)/sysinfo/version try browsing to it and input it manually"
+                start-sleep 5
+                Write-Host "Press ENTER to select region"
+                Pause
+                $searchRegion = $availableRegions | Out-GridView -PassThru
+                $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion.RegionName} | select -ExpandProperty regionCode
+            }
+
+        $CMUrls = @(
+            "https://connector-management-scripts-490081306957-$($region).s3.amazonaws.com"
+            #"https://connector-management-assets-490081306957-$($region).s3.amazonaws.com",
+            #"https://component-registry-store-490081306957.s3.amazonaws.com/"
+        )
+	    	
+                # Start Connectivity test
+                foreach($url in $CMUrls){
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    $err=$_.exception
+                    if($_.Exception.Response.StatusCode.value__ -eq 403){
+                        $actual = "403"
+                        $result = $true
+                        $errorMsg = ""
+                    }
+                    Else{
+                        $errorMsg = "Tried reaching '$($err.Response.ResponseUri.AbsoluteUri)', Received Error: $($respErr.message)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+
+            }
+     
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementScripts..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri)"
+
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty"
+		$errorMsg = "Host name empty"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementAssets
+# Description....: Check connectivity to CM(+AWS S3 bucket, IOT).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function ConnectorManagementAssets{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementAssets..."
+
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        Try{
+            $CMUrls = @(
+            "https://connector-management-assets-490081306957-$($region).s3.amazonaws.com"
+            )
+	    	
+            # Start Connectivity test
+            foreach($url in $CMUrls){
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    $err=$_.exception
+                    if($_.Exception.Response.StatusCode.value__ -eq 403){
+                        $actual = "403"
+                        $result = $true
+                        $errorMsg = ""
+                    }
+                    Else{
+                        $errorMsg = "Tried reaching '$($err.Response.ResponseUri.AbsoluteUri)', Received Error: $($respErr.message)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+            }
+     
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementAssets..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri)"
+
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementComponentRegistry
+# Description....: Check connectivity to CM(+AWS S3 bucket, IOT).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function ConnectorManagementComponentRegistry{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementComponentRegistry..."
+
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        Try{
+            $CMUrls = @(
+            "https://component-registry-store-490081306957.s3.amazonaws.com"
+            )
+	    	
+            # Start Connectivity test
+            foreach($url in $CMUrls){
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    $err=$_.exception
+                    if($_.Exception.Response.StatusCode.value__ -eq 403){
+                        $actual = "403"
+                        $result = $true
+                        $errorMsg = ""
+                    }
+                    Else{
+                        $errorMsg = "Tried reaching '$($err.Response.ResponseUri.AbsoluteUri)', Received Error: $($respErr.message)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+            }
+     
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementComponentRegistry..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri)"
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementIOT
+# Description....: Vault network connectivity on port 1858
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function ConnectorManagementIOT
+{
+	[OutputType([PsCustomObject])]
+	param ()
+    
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        $AwsIOTAddress = "a3vvqcp8z371p3-ats.iot.$($region).amazonaws.com"
+	    Write-LogMessage -Type Verbose -Msg "Runing ConnectorManagementIOT"
+	    return Test-NetConnectivity -ComputerName $AwsIOTAddress -Port 443
+    }
+	Else
+	{
+        # In case $region is empty, we override the entire test and return our own customObject result.
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+        $result = $false
+        return [PsCustomObject]@{
+		expected = $true;
+		actual = $false;
+		errorMsg = $errorMsg;
+		result = $result;
+	    }
 	}
 }
 
@@ -3331,7 +3640,7 @@ Function CheckPrerequisites()
 
 	Try
 	{
-        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]).Count
+        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]+$arrCheckPrerequisites.Values[4]).Count
 		Write-LogMessage -Type Info -SubHeader -Msg "Starting checking $cnt prerequisites..."
 		
         $global:table = @()
@@ -3878,8 +4187,8 @@ Pause
 # SIG # Begin signature block
 # MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCC+3RJZxrmvLZE
-# TR0zcpo9l4bLQYdCxPSuXumVlhevZ6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAhAlJ203fxfkK/
+# LZfRkhjvcqVy6eUG7B0Ftm5JD5D8U6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4014,22 +4323,22 @@ Pause
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIBuYcRbg0AJSwkTvylSFTK0Hl17ZuupaGe+7NIA5QlTzMA0GCSqGSIb3
-# DQEBAQUABIICANlqbjWXJe5+uEte79UnQOGozuPQjDlFL+TkpJQ2zPLn7Y0OgSHs
-# zNpU+NZ0mO1StuJJvWLdgNhbR5szxfpRiLpO6o01Yj3vz3GDpntOlbLimtArAhQp
-# DmUAd2IalGUtHN2HfseVRbLN1d31nMdE7bCjq1DKq+yMB1FjZmZmOGpYedT0D8gw
-# pxokG6eMjl1foBdzl2kp7LU5KYGv/eNE4OqwH9kWgTUqcIxpNQ7/Ffn6E8stTNj7
-# F4ITZYR5dvCOtLIsb5XsUoeLr5MEbZuywnezJRT2ygoMRxKUkAZA8WY/3Bf7f8Nv
-# cw8/ZzvyBETLjY9UTUloy/SnwHEE8EHsSRU6sFJCm20bjVZnc/5jy0j9XQwSl++E
-# D5M1HVU8gqEMghl3T81xBa/JY/SxLOiNCm5jZILIKRs0SlrJx3UKtNoUEO1CWhou
-# rnkCsI1ImQ9A5Nbrxd2cZ7QyH9d2gL5wLtOPLjnRZJH4QhLC/GaKbeRs59nOYTOb
-# ws6epnz2sjc57bMCCM0aKSBiXfv3GL9x8hpTpS1izF2yBtfArtyhivM3j1/bHdHA
-# ElSSvA5JZtSs1mgpJpX69nLoAqEuqxX/k1/LqfjYghwGkreo4bncDbS6bIHITB65
-# ntN0Na0BOGvSHw8ic/dz/NW8k88jhb3GOYNXEk7D+UPvFMseZZDiiCvIoYIOLDCC
+# AQkEMSIEIINwkbCubpn2V2rHSr3NGNy8dtCN9bhimd+cKeM51tEpMA0GCSqGSIb3
+# DQEBAQUABIICABsyozs7FmAI2KF8LVdNqNfjNANTpwEjgwH83tI4L80i3gx9U8RY
+# 9Tcmepqf00Jg1ou1lodOz00O09nKCKHMV8o6Czepz1E34y7Svn1pU6OENrx/Wo5J
+# E1K0ebXeWQcvmy5KN4/4pmGWoXm1qjp6k3AahzJtpRJFgSupI1I+hMolfN5R5I5l
+# XQRRqjmm8NT4IO8WDdWSI0TKA54rFenzYrfbMFDs5XjMT6N/sdBePY+sjFON1doy
+# ywuyx5Y1CzynVNi2mQjGcwpbsTE43H5fC0j+FfvTt70C6tx6jIrEsrReTl0AKmU0
+# PHzReMd3tXs5Fq0Fa6HNEmRSf24xsUgJ19aYNPEzsIP15iwGhKWCcqeIs84xkG8T
+# tAwVnzEEFXO85xtTfrIPIg/IcThdWpnnkqTGjvbAnNo59SkNFAXuSStVwUykc/gE
+# ypS2XRVWWCqOOT7CNA4me2ffaLKEmPJlMhP1GkLhARlGXT6a2KsEk131nENHZO0P
+# xrGLW92ZUod68k/YF27Kyp5eMwU9dx52j+IXkiJZm5/qURDKX5or+WgoNoYhacWi
+# ywDQrrNiiMJEuNUk9BVG02MBNicmTxno/G6AjdXGWLRPaWaW0AcpLkBvg2BmIS5o
+# achVo+JU9n7Fzf55LuO9+V7Y6mZwpGWJy8MlR/E/h8sxpy1JJigMiZp2oYIOLDCC
 # DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
 # BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFLKRIWQ/SYMZjOJRRKkW8gh4ifdjAhUAv1d4wyYi
-# kCwjycLOuLV4X48CvoYYDzIwMjMwNjIzMTQxOTEwWjADAgEeoIGGpIGDMIGAMQsw
+# AQcXAzAhMAkGBSsOAwIaBQAEFNU93pjaJFXso2UAuZebfvfJAWpPAhUAnXksQNMT
+# 2fruqHhtltm+WcQG/08YDzIwMjMwNjI2MjA0NTAyWjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -4093,13 +4402,13 @@ Pause
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjMwNjIzMTQxOTEwWjAvBgkqhkiG9w0BCQQxIgQg
-# Cva39kOCTa8rdRTGpbxKXDK45u78yzwdQDg8SloFNIMwNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjMwNjI2MjA0NTAyWjAvBgkqhkiG9w0BCQQxIgQg
+# Zxp6hM0Gb157qKJKNhO7Mx9Np7JfjV4IEP2leyVSreowNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBAIukT+cta7wStYF5mz4MMUA6WgQJxl25iEY3ZkENmLdV1TKyof4d
-# Uruic8zjGgkXpdmr9XpxGTxfG7pfsDFk4WPRC8WRbEJGLXGGgd/AhJsEP+MFOcKl
-# w8WlEL90gwEMLtKfLwpcdLSW3cyhxsoBdiI923vjwN/gL4+pCjKTohfRxsUf6/Z5
-# N4IxoFDnjSzSonTya7VvqjJP4FkiW+g3iQY8LtzOtJORQ4oNgTp6kfqzcstUalRp
-# X8D7mihZHGiDsyETwr1wcNHx/GsjwZvm3b5frY+q4J7nVBXN5EDXjCeHRIUB02xV
-# PNdvdGocEb/IIWp+llrk6kUzD4OnVrS53MU=
+# hvcNAQEBBIIBACnD8sGgmbEVXCckfR+fYu3kjJXNiZAf+4dnXY9mnrN3J7jo48mh
+# BDkOD3JeNgewxEfi9SqPXno2GN3vQTK0KtGja7qm8+dNVnoyKxnPiLC6vVrbgmNh
+# vFO7uR5yuzqSJYjlcwh4Kyp45T4wmi3voJw3sYeDhLN5YBV2L5gvbjujCpm3BHwX
+# piX4gwRgzQ6hi+0fQcDEnos0b1ARLZaRs7yYHyCwzEynEtVaRhpQkSktK5GIbYSo
+# FdTYEF7vdXESaQ9+2il1hVdZccRogttaJvyASEPfo+FGyA4MZGa6au3KP/IvuqnE
+# G+2ACyWH0y3B/jWloHpCWf6wtWfAtMe4YPA=
 # SIG # End signature block
