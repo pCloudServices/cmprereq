@@ -92,6 +92,7 @@ $arrCheckPrerequisitesGeneral = @(
 #"WinRMListener", #General
 "PendingRestart", #General
 "CheckNoProxy",
+"CheckEndpointProtectionServices", #General
 "GPO" #General + PSM
 )
 
@@ -110,7 +111,7 @@ $arrCheckPrerequisitesPSM = @(
 )
 
 $arrCheckPrerequisitesCPM = @(
-"CRLConnectivity" #CPM
+#"CRLConnectivity" #CPM
 )
 
 
@@ -131,7 +132,7 @@ If ($POC){
 	$arrCheckPrerequisitesGeneral += $arrCheckPrerequisitesPOC
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},<#@{CPM = $arrCheckPrerequisitesCPM},#>@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
 
 
 ## List of GPOs to check
@@ -159,7 +160,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "21"
+[int]$versionNumber = "22"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -200,8 +201,8 @@ $script:availableRegions = @(
     [pscustomobject]@{RegionName = "AP Southeast" ; RegionCode = "ap-southeast-1" ; Description = "Singapore"} # Singapore
     [pscustomobject]@{RegionName = "Sydney" ; RegionCode = "ap-southeast-2" ; Description = "Sydney"} # Sydney
     [pscustomobject]@{RegionName = "Tokyo" ; RegionCode = "ap-northeast-1" ; Description = "Tokyo"} # Tokyo
-    [pscustomobject]@{RegionName = "Asia Pacific" ; RegionCode = "ap-south-1" ; Description = "Mumbai"} # Mumbai
-    [pscustomobject]@{RegionName = "Jakarta" ; RegionCode = "ap-southeast-3" ; Description = "Jakarta"} #Placeholder
+    [pscustomobject]@{RegionName = "Asia Pacific" ; RegionCode = "ap-south-1" ; Description = "Australia Sydney ,India Mumbai"} # Mumbai
+    [pscustomobject]@{RegionName = "ap-southeast-3" ; RegionCode = "ap-southeast-3" ; Description = "Indonesia Jakarta"} #Placeholder
 )
 
 
@@ -282,11 +283,11 @@ Function TestIdentityServiceAccount(){
 	Try{
 
 		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
-		if($($creds.GetNetworkCredential().Password) -match ' '){
-			Write-Host "Your password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
+		if($($creds.username) -match ' ' -or $($creds.GetNetworkCredential().Password) -match ' '){
+			Write-Host "Your Username/password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
 			Write-Host "Remove it and try again." -ForegroundColor Yellow
 			Pause
-			Exit
+            Exit
 		}
 	
 		#PlatformParams
@@ -1613,9 +1614,11 @@ Function ConsoleHTTPConnectivity
 		
 		$CustomerGenericGET = 0
 
-        If(![string]::IsNullOrEmpty($CustomerId)){
+        $portalSubDomainURL = $portalURL.Split(".")[0]
+
+        If(![string]::IsNullOrEmpty($portalSubDomainURL)){
 		    Try{
-		    	$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=$CustomerId&configItem=environmentFQDN"
+		    	$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?subDomain=$portalSubDomainURL&configItem=environmentFQDN"
 		    	$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
 		    	If($null -ne $CustomerGenericGET.config)
 		    	{
@@ -1637,7 +1640,7 @@ Function ConsoleHTTPConnectivity
 		    	}
                 elseif ($_.Exception.Response.StatusCode.value__ -eq 400)
 		    	{
-		    		$errorMsg = "Unable to GET to '$connectorConfigURL' did you mistype CustomerId?"
+		    		$errorMsg = "Unable to GET to '$connectorConfigURL' Something is wrong with the syntax we are sending.."
 		    		$result = $false
 		    		$actual = $_.Exception.Response.StatusCode.value__
 		    	}
@@ -1650,7 +1653,7 @@ Function ConsoleHTTPConnectivity
 		    }
         }
         Else{
-		    $errorMsg = "Skipping this test since CustomerId is empty"
+		    $errorMsg = "Skipping this test since host is empty"
         }	
 		
 		Write-LogMessage -Type Verbose -Msg "Finished ConsoleHTTPConnectivity"
@@ -2372,13 +2375,25 @@ Function ConnectorManagementScripts{
             # Select region Name, so we can match it vs exception regions below
             $searchRegion = $GetTenantDetails.Result.Region
 
-            # Special expection for CM regions operated elsewhere.
+            # Special exception for CM regions operated elsewhere.
             if($searchRegion -eq "Eu South"){
                 $searchRegion = "Frankfurt"
             }
-            # Special expection for CM regions operated elsewhere.
+            # Special exception for CM regions operated elsewhere.
             if($searchRegion -eq "Jakarta"){
                 $searchRegion = "Singapore"
+            }
+
+            # Special exception for Australia and India since Identity uses same region name for them, we can distinguish by pod
+            if($searchRegion -eq "Asia Pacific"){
+                if($GetTenantDetails.Result.Name -like "pod1302*")
+                {
+                    $searchRegion = "Sydney"
+                }
+                Else{
+                    $searchRegion = "Asia Pacific"
+                }
+                   
             }
 
             # Match region from list and get region code.
@@ -2413,7 +2428,7 @@ Function ConnectorManagementScripts{
                         $errorMsg = ""
                     }
                     Else{
-                        $errorMsg = "Tried reaching '$($err.Response.ResponseUri.AbsoluteUri)', Received Error: $($respErr.message)"
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr.message)"
                         $result = $false
                         $actual = $_.Exception.Response.StatusCode.value__
                     }
@@ -2483,7 +2498,7 @@ Function ConnectorManagementAssets{
                         $errorMsg = ""
                     }
                     Else{
-                        $errorMsg = "Tried reaching '$($err.Response.ResponseUri.AbsoluteUri)', Received Error: $($respErr.message)"
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr.message)"
                         $result = $false
                         $actual = $_.Exception.Response.StatusCode.value__
                     }
@@ -2551,7 +2566,7 @@ Function ConnectorManagementComponentRegistry{
                         $errorMsg = ""
                     }
                     Else{
-                        $errorMsg = "Tried reaching '$($err.Response.ResponseUri.AbsoluteUri)', Received Error: $($respErr.message)"
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr.message)"
                         $result = $false
                         $actual = $_.Exception.Response.StatusCode.value__
                     }
@@ -2609,6 +2624,91 @@ Function ConnectorManagementIOT
 		result = $result;
 	    }
 	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CheckEndpointProtectionServices
+# Description....: Check if machine has AV/ATP agents running
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+function CheckEndpointProtectionServices(){
+    $expected = ""
+    $errorMsg = ""
+    $actual = ""
+    $result = $false
+
+    Write-LogMessage -Type Verbose -Msg "Starting CheckEndpointProtectionServices..."
+
+    $endpointProtectionServices = @(
+     "*AVGNT*",
+     "*Avast*",
+     "*Avira*",
+     "*Bitdefender*",
+     "*Carbon Black*",
+     "*Check Point*",
+     "*Cisco*",
+     "*Comodo*",
+     "*Cortex*",
+     "*CrowdStrike*",
+     "*CylancePROTECT*",
+     "*ESET Endpoint*",
+     "*FireEye*",
+     "*Guardicore*",
+     "*Fortinet*",
+     "*Kaspersky*",
+     "*Malwarebytes*",
+     "*McAfee*",
+     "*Microsoft Defender*",
+     "*Palo Alto*",
+     "*Panda*",
+     "*Qualys*",
+     "*SentinelOne*",
+     "*Sophos*",
+     "*Symantec*",
+     "*Trend Micro*",
+     "*Webroot*"
+    )
+    
+    Try
+    {
+        foreach ($service in $endpointProtectionServices)
+        {
+            $serviceStatus = Get-Service -Name $service -ErrorAction SilentlyContinue
+            if ($serviceStatus)
+            {
+                if ($serviceStatus.Status -eq "Running")
+                {
+                    $errorMsg = "Detected AV/ATP Service '$($serviceStatus.DisplayName)': Running. Note that we advise to turn off any AV/ATP agents for the duration of installation/upgrades, various AV/ATP agents are known to prevent execution, delete files, prevent NTFS permissions changes or block commands. Post operation we strongly advise to have these services BACK on and running. In some rare use cases, it's not enough to simply stop the service, it will keep failing the installation until the AV agent is completely uninstalled, take that into consideration, each AV acts differently."
+                    $result = $false
+                    $actual = $serviceStatus
+                }
+                # service was found but stopped.
+                Elseif($serviceStatus.Status -eq "Stopped")
+                {
+                    
+                    $result = $true 
+                }
+            }
+            # No service found from the list
+            else
+            {
+                $result = $true 
+            }
+        }
+
+        Write-LogMessage -Type Verbose -Msg "Finished CheckEndpointProtectionServices..."  
+    }
+    Catch{
+        $errorMsg = "Could not check CheckEndpointProtectionServices. Error: $(Collect-ExceptionMessage $_.Exception)"
+    }
+
+        return [PsCustomObject]@{
+            expected = $expected;
+            actual = $actual;
+            errorMsg = $errorMsg;
+            result = $result;
+        }
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -3228,6 +3328,25 @@ function Disable-NLA()
     UnsetScheduledTask -taskName $taskNameNLA
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: PromptForRDSInstall
+# Description....: Prompt user for RDS install
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+function PromptForRDSInstall()
+{
+    $decisionPSM = Get-Choice -Title "Deploy RDS? (Required for Privileged Session Management)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
+    if ($decisionPSM -eq "Yes (Recommended)")
+    {
+        Write-LogMessage -type Info -MSG "Selected YES to install RDS." -Early
+        InstallRDS
+    }
+    Else
+    {
+        Write-LogMessage -type Info -MSG "Selected NOT to install RDS, skipping RDS role install..." -Early
+    }
+}
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: checkIfPSMisRequired
@@ -3237,25 +3356,25 @@ function Disable-NLA()
 # =================================================================================================================================
 function checkIfPSMisRequired()
 {
-    #Check if RDS/CB installed, 
+    # Check if RDS/CB installed, 
     $RDSFeature = Get-WindowsFeature *Remote-Desktop-Services*
-	$ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
+    $ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
 
-    if(($RDSFeature.Installed -eq $false) -or ($ConnectionBrokerFeature.Installed -eq $false))
+    if ($OutOfDomain -eq $true)
     {
-        $decisionPSM = Get-Choice -Title "Deploy RDS? (Required for Privileged Session Management)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
-        if ($decisionPSM -eq "Yes (Recommended)")
+        if ($RDSFeature.Installed -eq $false)
         {
-            Write-LogMessage -type Info -MSG "Selected YES to install RDS." -Early
-            InstallRDS
+            PromptForRDSInstall
         }
-        Else
+    }
+    else
+    {
+        if (($RDSFeature.Installed -eq $false) -or ($ConnectionBrokerFeature.Installed -eq $false))
         {
-            Write-LogMessage -type Info -MSG "Selected NOT to install RDS, skipping RDS role install..." -Early
+            PromptForRDSInstall
         }
     }
 }
-
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Get-Choice
@@ -3344,7 +3463,20 @@ Function Get-Choice{
 # =================================================================================================================================
 Function CPMConnectionTest(){
 #Static
-$VaultOperationFolder = "$PSScriptRoot\VaultOperationsTester"
+$VaultOperationFolder1 = "$PSScriptRoot\VaultOperationsTester"
+$VaultOperationFolder2 = "$(Split-Path $PSScriptRoot -Parent)\VaultOperationsTester"
+
+ #Prereqs   
+if(Test-Path -Path "$VaultOperationFolder1\VaultOperationsTester.exe") {
+    $VaultOperationFolder = $VaultOperationFolder1
+} elseif(Test-Path -Path "$VaultOperationFolder2\VaultOperationsTester.exe") {
+    $VaultOperationFolder = $VaultOperationFolder2
+} else {
+    Write-LogMessage -Type Error -Msg "Required file 'VaultOperationsTester.exe' doesn't exist in expected folders: `"$VaultOperationFolder1`" or `"$VaultOperationFolder2`". Make sure you get the latest version and extract it correctly from zip."
+    Pause
+    Return
+}
+
 $stdoutFile = "$VaultOperationFolder\Log\stdout.log"
 $LOG_FILE_PATH_CasosArchive = "$VaultOperationFolder\Log\old"
 $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
@@ -3377,12 +3509,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
 
     }
- #Prereqs   
- if(!(Test-Path -Path "$VaultOperationFolder\VaultOperationsTester.exe")){
-     Write-LogMessage -Type Error -Msg "Required folder doesn't exist: `"$VaultOperationFolder`". Make sure you get the latest version and extract it correctly from zip. Rerun the script with -CPMConnectionTest flag."
-     Pause
-     Return
- }
+ # redis++
  if((Get-CimInstance -Class win32_product | where {$_.Name -like "Microsoft Visual C++ 2013 x86*"}) -eq $null){
     $CpmRedis = "$VaultOperationFolder\vcredist_x86.exe"
     Write-LogMessage -type Info -MSG "Installing Redis++ x86 from $CpmRedis..." -Early
@@ -3413,7 +3540,13 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
         #Get Credentials
         Write-LogMessage -type Info -MSG "Enter Privilege Cloud InstallerUser Credentials"
-        $creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		if($($creds.username) -match ' ' -or $($creds.GetNetworkCredential().Password) -match ' '){
+			Write-Host "Your Username/password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
+			Write-Host "Remove it and try again." -ForegroundColor Yellow
+			Pause
+            return
+		}
         #Check pw doesn't contain illegal char, otherwise installation will fail
         [string]$illegalchars = '\/<>{}''&"$*@`|'
         $pwerror = $null
@@ -3477,7 +3610,13 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
 
             # Add entry to ini file that this test passed and skip it from now on.
             Remove-Item -Path $CONFIG_PARAMETERS_FILE
-            Try{$parameters += @{CPMConnectionTestPassed = $True}}Catch{}
+            Try{
+                $parameters += @{
+                    CPMConnectionTestPassed = $True
+                    LastSuccessfulCPMPassDate = (Get-Date -Format "yyyy-MM-dd")
+                }
+            }
+            Catch{}
             $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
             }
 }
@@ -3506,10 +3645,6 @@ param
 		Else { $true }
 	})]
 	[String]${Please enter your provided portal URL Address (Or leave empty)},
-	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
-	[AllowEmptyString()]
-	[Alias("CustomerId")]
-	[String]${Please enter your CustomerId (Or leave empty)},
 	# Config File
 	[Parameter(ParameterSetName='File',Mandatory=$true)]
 	[ValidateScript({Test-Path $_})]
@@ -3520,7 +3655,6 @@ param
 	 {
         # ------ Copy parameter values entered ------
         $script:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}
-        $script:CustomerId = ${Please enter your CustomerId (Or leave empty)}
         # grab the subdomain, depending how the user entered the url (hostname only or URL).
         if($script:portalURL -match "https://"){
             $script:portalURL = ([System.Uri]$script:PortalURL).host
@@ -3548,7 +3682,6 @@ param
 			PortalURL = $PortalURL.Trim()
 			VaultIP = $VaultIP.trim()
 			TunnelIP = $TunnelIP.trim()
-            CustomerId = $CustomerId.trim()
 		}
 		$parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
         # deal with ispss
@@ -3559,11 +3692,41 @@ param
 		$script:VaultIP = $parameters.VaultIP
 		$script:TunnelIP = $parameters.TunnelIP
 		$script:PortalURL = $parameters.PortalURL
-        $script:CustomerId = $parameters.CustomerId
+        $script:LastSuccessfulCPMPassDate = $parameters.LastSuccessfulCPMPassDate
         # deal with ispss
         if($PortalURL -like "*.privilegecloud.cyberark.com"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
- }
+    
+    # Show the user the main value we are working with.
+    Write-LogMessage -Type Info -SubHeader -Msg "Privilege Cloud Tenant Details:"
+    Write-LogMessage -type Success -MSG "Portal: $PortalURL"
+    Write-LogMessage -type Success -MSG "Vault:  $VaultIP"
+    Write-LogMessage -type Success -MSG "Tunnel: $TunnelIP"
+
+    # Check when was last time CPMConnectionTest ran, we want this to be fresh atleast 3 days before install date.
+    if($parameters.LastSuccessfulCPMPassDate)
+    {
+        # Convert the string date to DateTime for comparison
+        $lastSuccessDate = [DateTime]::ParseExact($parameters.LastSuccessfulCPMPassDate, "yyyy-dd-MM", $null)
+        
+        # Calculate the diff
+        $daysSinceLastSuccess = (Get-Date) - $lastSuccessDate
+
+        if($daysSinceLastSuccess.Days -gt 2)
+        {
+            Write-LogMessage -type Warning -MSG ("Last successful CPMConnectionTest was: " + $lastSuccessDate.ToString("yyyy-dd-MM") + ", let's run it again using -CPMConnectionTest.")
+        }
+        else
+        {
+            Write-LogMessage -type Success -MSG ("Last successful CPMConnectionTest was: " + $lastSuccessDate.ToString("yyyy-dd-MM"))
+        }
+    }
+    else 
+    {
+        # If the value doesn't exist
+        Write-LogMessage -type Info -MSG "Last successful CPMConnectionTest was: not yet performed." -Early
+    }
+}
 
 Function AddLineToTable($action, $resultObject)
 {
@@ -4017,8 +4180,8 @@ Function Get-LogHeader
 # Parameters.....: None
 # Return Values..: The Header image
 # =================================================================================================================================
-Function Get-LogoHeader{
-$t = @"
+Function Get-LogoHeader {
+    $t = @"
   ____      _                _         _    
  / ___|   _| |__   ___ _ __ / \   _ __| | __
 | |  | | | | '_ \ / _ \ '__/ _ \ | '__| |/ /
@@ -4028,21 +4191,30 @@ $t = @"
 
 "@
 
-for ($i=0;$i -lt $t.length;$i++) {
-if ($i%2) {
- $c = "blue"
-}
-elseif ($i%5) {
- $c = "white"
-}
-elseif ($i%7) {
- $c = "gray"
-}
-else {
-   $c = "white"
-}
-write-host $t[$i] -NoNewline -ForegroundColor $c
-}
+    for ($i=0; $i -lt $t.Length; $i++) {
+        $c = "white"  # Default color
+
+        if ($i % 2 -eq 0) {
+            $c = "black"
+        }
+        elseif ($i % 3 -eq 0) {
+            $c = "cyan"
+        }
+        elseif ($i % 5 -eq 0) {
+            $c = "green"
+        }
+        elseif ($i % 7 -eq 0) {
+            $c = "magenta"
+        }
+        elseif ($i % 11 -eq 0) {
+            $c = "yellow"
+        }
+        elseif ($i % 13 -eq 0) {
+            $c = "red"
+        }
+
+        Write-Host $t[$i] -NoNewline -ForegroundColor $c
+    }
 }
 
 #endregion
@@ -4131,7 +4303,6 @@ else
 	            {
 		        $PortalURL = ([System.Uri]$PortalURL).Host
 	            }
-            $CustomerId = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "CustomerId:").ToString().ToLower().trim("customerid:").Trim()
             $VaultIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "VaultIp:").ToString().ToLower().trim("vaultip:").Trim()
             $TunnelIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "ConnectorServerIp:").ToString().ToLower().trim("connectorserverip:").Trim()
 
@@ -4139,7 +4310,6 @@ else
 			    PortalURL = $PortalURL
 			    VaultIP = $VaultIP
 			    TunnelIP = $TunnelIP
-                CustomerId = $CustomerId
 		    }
 		    $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
 		    }
@@ -4181,14 +4351,11 @@ else
 }
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 Pause
-###########################################################################################
-# Main end
-###########################################################################################
 # SIG # Begin signature block
 # MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAhAlJ203fxfkK/
-# LZfRkhjvcqVy6eUG7B0Ftm5JD5D8U6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCWsdnUuxZTcjRx
+# OXtlAPibzsj3HT7pfopC1lfQf0aLHaCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4323,22 +4490,22 @@ Pause
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIINwkbCubpn2V2rHSr3NGNy8dtCN9bhimd+cKeM51tEpMA0GCSqGSIb3
-# DQEBAQUABIICABsyozs7FmAI2KF8LVdNqNfjNANTpwEjgwH83tI4L80i3gx9U8RY
-# 9Tcmepqf00Jg1ou1lodOz00O09nKCKHMV8o6Czepz1E34y7Svn1pU6OENrx/Wo5J
-# E1K0ebXeWQcvmy5KN4/4pmGWoXm1qjp6k3AahzJtpRJFgSupI1I+hMolfN5R5I5l
-# XQRRqjmm8NT4IO8WDdWSI0TKA54rFenzYrfbMFDs5XjMT6N/sdBePY+sjFON1doy
-# ywuyx5Y1CzynVNi2mQjGcwpbsTE43H5fC0j+FfvTt70C6tx6jIrEsrReTl0AKmU0
-# PHzReMd3tXs5Fq0Fa6HNEmRSf24xsUgJ19aYNPEzsIP15iwGhKWCcqeIs84xkG8T
-# tAwVnzEEFXO85xtTfrIPIg/IcThdWpnnkqTGjvbAnNo59SkNFAXuSStVwUykc/gE
-# ypS2XRVWWCqOOT7CNA4me2ffaLKEmPJlMhP1GkLhARlGXT6a2KsEk131nENHZO0P
-# xrGLW92ZUod68k/YF27Kyp5eMwU9dx52j+IXkiJZm5/qURDKX5or+WgoNoYhacWi
-# ywDQrrNiiMJEuNUk9BVG02MBNicmTxno/G6AjdXGWLRPaWaW0AcpLkBvg2BmIS5o
-# achVo+JU9n7Fzf55LuO9+V7Y6mZwpGWJy8MlR/E/h8sxpy1JJigMiZp2oYIOLDCC
+# AQkEMSIEIO5VdDztCKA9tYzVmyUoQousZk3w7jNTYMsb93+bKWrzMA0GCSqGSIb3
+# DQEBAQUABIICAC/8LtaFSMLrKxe2b9axSnfM2Yhzkju8r4BwKt6TsZL6cDRFnUux
+# 6DhtT8Bv6Y8QC/+747X8IXk4rGY1p2jeVstvqMgtVP3fvRPsJzRP9KOel9LW0A6b
+# mwUtTrI3o5EVVASiBPUPEadTsMpm29OtWxD+DQJvSHYctnvkAaD+Yyf16Uv45HI1
+# IVocCfxkCCdviel7VTTJvG5QVFaDbEEUW6hjEpukms12wkEfmCZL9e76nIy9RWav
+# DQaSu8d2YSMof/x/ka7JyKOQAMSrHq8snpihbE11ZCUtFoXGh4z7Zv5xNZl/LZl3
+# REIEBHgg57/8Z9+O+2ROjzvtmjjKNG8GIVhBdHBeEkRQ1QCVfdPnKzEWjSy5HMSi
+# 85lSAFbi8R1KRY1MgWjl8eu9CI/5xs0pjhgla4S4ACa1k1COTamHi9W0HjVjxsDF
+# VCdJlztthjxodgbqazfFQIKhPPM7xROpMMqBG9qVGOAl4CGIU/Zjr7sujXWyQUhT
+# mp1obXfLz5G5+rXhsNVssDZ6C7plKuGKc112updkhy54+l195L5IJ3yqJtk5YEoZ
+# DUEencmHqoqHoltHNQXhXofEIvyWkB7rcLeh4oUfVR6/gTZ9tpmQ+tMij3F024Fh
+# ov4pmjpTrXg/vmyJMdnpEIwpaXYOxMBUtMIkpQvwN0yGuOgezRGmfVUJoYIOLDCC
 # DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
 # BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFNU93pjaJFXso2UAuZebfvfJAWpPAhUAnXksQNMT
-# 2fruqHhtltm+WcQG/08YDzIwMjMwNjI2MjA0NTAyWjADAgEeoIGGpIGDMIGAMQsw
+# AQcXAzAhMAkGBSsOAwIaBQAEFNS8W7126eisOihpvltmz2wFoUxnAhUA0TlahyOc
+# sz3mvjzCzigHnYNp/OcYDzIwMjMwODE2MDk0NTI4WjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -4402,13 +4569,13 @@ Pause
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjMwNjI2MjA0NTAyWjAvBgkqhkiG9w0BCQQxIgQg
-# Zxp6hM0Gb157qKJKNhO7Mx9Np7JfjV4IEP2leyVSreowNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjMwODE2MDk0NTI4WjAvBgkqhkiG9w0BCQQxIgQg
+# WNH2YRWJC3vnGp5DwwvrlroSRGW0L/mCN/OzhrYC56wwNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBACnD8sGgmbEVXCckfR+fYu3kjJXNiZAf+4dnXY9mnrN3J7jo48mh
-# BDkOD3JeNgewxEfi9SqPXno2GN3vQTK0KtGja7qm8+dNVnoyKxnPiLC6vVrbgmNh
-# vFO7uR5yuzqSJYjlcwh4Kyp45T4wmi3voJw3sYeDhLN5YBV2L5gvbjujCpm3BHwX
-# piX4gwRgzQ6hi+0fQcDEnos0b1ARLZaRs7yYHyCwzEynEtVaRhpQkSktK5GIbYSo
-# FdTYEF7vdXESaQ9+2il1hVdZccRogttaJvyASEPfo+FGyA4MZGa6au3KP/IvuqnE
-# G+2ACyWH0y3B/jWloHpCWf6wtWfAtMe4YPA=
+# hvcNAQEBBIIBADzoFKRBI6F7RW+abTFkeAf4sPKhdA5rzzlctdkbT4UqUAdcI/5u
+# zOFx23gPP/6mmdBfFmKO3CGeUMTMYK1UbVRtTSaON8JcTGSQcHS2Ib6/hnsIRjrk
+# JnXnGxY7UfWMdJ26o2j9xtDU90rJq1xJ/0kuq9OVdYFq0WJ6Rdb2gdsnhBoEtTMv
+# a3+9cdVkPRfTNR5c0eIcbAWz6hIUPTWMJxEBhCBk5ypegl9fFfqqEt9V4Am1Dot/
+# Prbo8T89ibYbcrJ6CM/ZVyAho+9QI2QcLHz0HRNgLzhBqzcHNGRpHWFIEL/XexTw
+# BFKP2azyMtmor2OgQ77wGKPTTGWMrbNbMGU=
 # SIG # End signature block
