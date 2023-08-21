@@ -120,6 +120,7 @@ $arrCheckConnectorManagementPrerequisites = @(
 "ConnectorManagementAssets", #CM
 "ConnectorManagementComponentRegistry", #CM
 "ConnectorManagementIOT" #CM
+"ConnectorManagementIOTCert" # CM
 )
 
 
@@ -160,7 +161,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "22"
+[int]$versionNumber = "23"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -347,7 +348,7 @@ Function TestIdentityServiceAccount(){
 	
 	}catch
 	{
-		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri))"
+		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri))"
         Write-Host "Final Identity Result: Failed!" -ForegroundColor Red
 	}
 		#### Check against PVWA Directly, sometimes the shadowuser can be suspended/disabled in the vault but will be fine in identity. ####
@@ -384,7 +385,7 @@ Function TestIdentityServiceAccount(){
 			$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader
 		}Catch
 		{
-            Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri))"
+            Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri))"
             Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
 			#Lets check if identity was ok, then if vault is not, we know the pw is correct but user is most likely suspended/disabled.
 			if(($AnswerToResponse.Result.Summary -eq "LoginSuccess") -and ($pvwaResp -like "*Authentication failure*")){
@@ -2323,7 +2324,7 @@ Function CheckIdentityCustomURL{
         }
         Catch
         {
-            $errorMsg = $identityErr.message + $_.exception.status + $_.exception.Response.ResppnseUri.AbsoluteUri
+            $errorMsg = $identityErr.message + $_.exception.status + $_.exception.Response.ResponseUri.AbsoluteUri
         }
     }
 	Else
@@ -2380,13 +2381,13 @@ Function ConnectorManagementScripts{
                 $searchRegion = "Frankfurt"
             }
             # Special exception for CM regions operated elsewhere.
-            if($searchRegion -eq "Jakarta"){
-                $searchRegion = "Singapore"
+            if($searchRegion -eq "ap-southeast-3"){ # Jakarta
+                $searchRegion = "AP Southeast" # Singapore
             }
 
             # Special exception for Australia and India since Identity uses same region name for them, we can distinguish by pod
             if($searchRegion -eq "Asia Pacific"){
-                if($GetTenantDetails.Result.Name -like "pod1302*")
+                if($GetTenantDetails.Result.Name -like "pod1302*" -or $GetTenantDetails.Result.Name -like "pod1306*")
                 {
                     $searchRegion = "Sydney"
                 }
@@ -2440,7 +2441,7 @@ Function ConnectorManagementScripts{
         }
         Catch
         {
-            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri)"
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
 
         }
     }
@@ -2509,7 +2510,7 @@ Function ConnectorManagementAssets{
         }
         Catch
         {
-            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri)"
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
 
         }
     }
@@ -2577,7 +2578,7 @@ Function ConnectorManagementComponentRegistry{
         }
         Catch
         {
-            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResppnseUri.AbsoluteUri)"
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
         }
     }
 	Else
@@ -2623,6 +2624,81 @@ Function ConnectorManagementIOT
 		errorMsg = $errorMsg;
 		result = $result;
 	    }
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementIOTCert
+# Description....: Check the certificate endpoint is not tampered by proxy/SSL inspect.
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function ConnectorManagementIOTCert
+{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "CN=Amazon RSA 2048 M01, O=Amazon, C=US"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    
+
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementIOTCert..."
+
+
+    function Get-SSLCertificateDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Url
+    )
+
+    $uri = [System.Uri]::new($Url)
+    $tcp = New-Object System.Net.Sockets.TcpClient
+    $tcp.Connect($uri.Host, $uri.Port)
+
+    $sslStream = New-Object System.Net.Security.SslStream -ArgumentList $tcp.GetStream()
+    $sslStream.AuthenticateAsClient($uri.Host)
+
+    $certificate = $sslStream.RemoteCertificate
+    $sslStream.Close()
+
+    return $certificate
+}
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        Try{
+            $CertURL = "https://a3vvqcp8z371p3-ats.iot.$($region).amazonaws.com:443"
+            $cert = Get-SSLCertificateDetails -Url $CertURL
+            $actual = $cert.Issuer
+
+            if($actual -ne $expected){
+                $result = $false
+                $errorMsg = "The expected certificate ('$($expected)') doesn't match the actual certificate received ('$($actual)'), You can test it by browsing to this URL: '$($CertURL)'."
+            }
+            Else{
+                $result = $true
+            }
+ 
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementIOTCert..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -4351,11 +4427,13 @@ else
 }
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 Pause
+#########################
+
 # SIG # Begin signature block
-# MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIqRQYJKoZIhvcNAQcCoIIqNjCCKjICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCWsdnUuxZTcjRx
-# OXtlAPibzsj3HT7pfopC1lfQf0aLHaCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCuTPufaPHf+axJ
+# 40eR+wO0b3kpb+LCmTSIN2y+RCVp36CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4485,97 +4563,97 @@ Pause
 # oZ6wZE9s0guXjXwwWfgQ9BSrEHnVIyKEhzKq7r7eo6VyjwOzLXLSALQdzH66cNk+
 # w3yT6uG543Ydes+QAnZuwQl3tp0/LjbcUpsDttEI5zp1Y4UfU4YA18QbRGPD1F9y
 # wjzg6QqlDtFeV2kohxa5pgyV9jOyX4/x0mu74qADxWHsZNVvlRLMUZ4zI4y3KvX8
-# vZsjJFVKIsvyCgyXgNMM5Z4xghFFMIIRQQIBATBsMFwxCzAJBgNVBAYTAkJFMRkw
+# vZsjJFVKIsvyCgyXgNMM5Z4xghFEMIIRQAIBATBsMFwxCzAJBgNVBAYTAkJFMRkw
 # FwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTIwMAYDVQQDEylHbG9iYWxTaWduIEdD
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIO5VdDztCKA9tYzVmyUoQousZk3w7jNTYMsb93+bKWrzMA0GCSqGSIb3
-# DQEBAQUABIICAC/8LtaFSMLrKxe2b9axSnfM2Yhzkju8r4BwKt6TsZL6cDRFnUux
-# 6DhtT8Bv6Y8QC/+747X8IXk4rGY1p2jeVstvqMgtVP3fvRPsJzRP9KOel9LW0A6b
-# mwUtTrI3o5EVVASiBPUPEadTsMpm29OtWxD+DQJvSHYctnvkAaD+Yyf16Uv45HI1
-# IVocCfxkCCdviel7VTTJvG5QVFaDbEEUW6hjEpukms12wkEfmCZL9e76nIy9RWav
-# DQaSu8d2YSMof/x/ka7JyKOQAMSrHq8snpihbE11ZCUtFoXGh4z7Zv5xNZl/LZl3
-# REIEBHgg57/8Z9+O+2ROjzvtmjjKNG8GIVhBdHBeEkRQ1QCVfdPnKzEWjSy5HMSi
-# 85lSAFbi8R1KRY1MgWjl8eu9CI/5xs0pjhgla4S4ACa1k1COTamHi9W0HjVjxsDF
-# VCdJlztthjxodgbqazfFQIKhPPM7xROpMMqBG9qVGOAl4CGIU/Zjr7sujXWyQUhT
-# mp1obXfLz5G5+rXhsNVssDZ6C7plKuGKc112updkhy54+l195L5IJ3yqJtk5YEoZ
-# DUEencmHqoqHoltHNQXhXofEIvyWkB7rcLeh4oUfVR6/gTZ9tpmQ+tMij3F024Fh
-# ov4pmjpTrXg/vmyJMdnpEIwpaXYOxMBUtMIkpQvwN0yGuOgezRGmfVUJoYIOLDCC
-# DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
-# BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFNS8W7126eisOihpvltmz2wFoUxnAhUA0TlahyOc
-# sz3mvjzCzigHnYNp/OcYDzIwMjMwODE2MDk0NTI4WjADAgEeoIGGpIGDMIGAMQsw
-# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
-# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
-# QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
-# ewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMx
-# FzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVz
-# dCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZv
-# ciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJz
-# YWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBa
-# Fw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRl
-# YyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEo
-# MCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJ
-# KoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawy
-# jwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG
-# 50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45
-# ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU
-# 1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8j
-# wTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOC
-# AXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1Ud
-# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
-# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
-# cGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5j
-# b20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNh
-# bC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZ
-# MBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB
-# 8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZI
-# hvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZA
-# Ka3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxO
-# M+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2
-# xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv
-# 2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5
-# FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWv
-# uswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYD
-# VQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1
-# c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGlu
-# ZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQG
-# EwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5
-# bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBU
-# aW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAw
-# ggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQg
-# bTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMj
-# dUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR
-# 8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2
-# ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5S
-# MQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8E
-# AjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0
-# cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5
-# bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5z
-# eW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYB
-# BQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcw
-# AYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9o
-# dHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAo
-# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4E
-# FgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB
-# 8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZy
-# cGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5n
-# z3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9E
-# PEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6a
-# escixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GY
-# FHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJa
-# MIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
-# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
-# BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
-# BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjMwODE2MDk0NTI4WjAvBgkqhkiG9w0BCQQxIgQg
-# WNH2YRWJC3vnGp5DwwvrlroSRGW0L/mCN/OzhrYC56wwNwYLKoZIhvcNAQkQAi8x
-# KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBADzoFKRBI6F7RW+abTFkeAf4sPKhdA5rzzlctdkbT4UqUAdcI/5u
-# zOFx23gPP/6mmdBfFmKO3CGeUMTMYK1UbVRtTSaON8JcTGSQcHS2Ib6/hnsIRjrk
-# JnXnGxY7UfWMdJ26o2j9xtDU90rJq1xJ/0kuq9OVdYFq0WJ6Rdb2gdsnhBoEtTMv
-# a3+9cdVkPRfTNR5c0eIcbAWz6hIUPTWMJxEBhCBk5ypegl9fFfqqEt9V4Am1Dot/
-# Prbo8T89ibYbcrJ6CM/ZVyAho+9QI2QcLHz0HRNgLzhBqzcHNGRpHWFIEL/XexTw
-# BFKP2azyMtmor2OgQ77wGKPTTGWMrbNbMGU=
+# AQkEMSIEILAXJ92audW9euJ4rPvIufAYGBKp8MDrau4Zzfvg0oVBMA0GCSqGSIb3
+# DQEBAQUABIICAA4+XY9VLBSNRHtF8v3StUhrsYUVQF8z946XQ8RISRcKIXB015WS
+# ldJq4TWQbvS7MLyw43ZyOXnAa6r7lgMJPC0CMrKVGj4WTJw9DUk7bVPXDNKeqjjg
+# jmvMn42CFQu7usFuwoJAlWyYWzsAtom/xETpvu8jVM/uitUsSZWyQn84HQoWpO0X
+# s2X/mrdWODr1r93u9jXSuEfH8gx4ziLm94dQ8aReoBUUyMaCRkoxQUNPxKUk2IDG
+# 3JnJJHtzgCd/JjIIn2CT5b9mjlz5DgicnwV1jgYz5bxlaaNQB1QNzwmDkU/jBL0I
+# wFOGy0HeEmUylDxoRajfI0U7K2sY1ozRiMf8q0UC2W8nL6uhVJSIFi2bjJ1UcHMT
+# VucmWaDOYXwNHmmoVva6erVhZmUQZl0FVwF1ELUOKBT+cXIPSpUBLYIu+jSQiGP4
+# oukJ8o2TjhpHfNtqfrjpALJeM4sfx39hNTHzP3KVGbkikfaRMELIpen5PpLlGumQ
+# ZLz27r+rvDpbL6gA5Dt5dT80yl/saznoJ3v5poJOkENPLBc7gYqFWoSKHezZnPav
+# ZQn6g/NRoSZsebzICDmsOZTwkkxg6r1gK/aRHud8ssnb+JCBBkexBWkCh6WGSIh1
+# XLWI4kz0kwAJlWhIfvSPtYb/uoPXweHwBfPUhxaVqQAOebjdVPgeCziOoYIOKzCC
+# DicGCisGAQQBgjcDAwExgg4XMIIOEwYJKoZIhvcNAQcCoIIOBDCCDgACAQMxDTAL
+# BglghkgBZQMEAgEwgf4GCyqGSIb3DQEJEAEEoIHuBIHrMIHoAgEBBgtghkgBhvhF
+# AQcXAzAhMAkGBSsOAwIaBQAEFAbAKf2eEttLFF6NgXgTymPitbsAAhQS+Fe5Ho4L
+# OfOgjE14EgXhOVJachgPMjAyMzA4MjEwODQ1MzlaMAMCAR6ggYakgYMwgYAxCzAJ
+# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
+# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazExMC8GA1UEAxMoU3ltYW50ZWMgU0hB
+# MjU2IFRpbWVTdGFtcGluZyBTaWduZXIgLSBHM6CCCoswggU4MIIEIKADAgECAhB7
+# BbHUSWhRRPfJidKcGZ0SMA0GCSqGSIb3DQEBCwUAMIG9MQswCQYDVQQGEwJVUzEX
+# MBUGA1UEChMOVmVyaVNpZ24sIEluYy4xHzAdBgNVBAsTFlZlcmlTaWduIFRydXN0
+# IE5ldHdvcmsxOjA4BgNVBAsTMShjKSAyMDA4IFZlcmlTaWduLCBJbmMuIC0gRm9y
+# IGF1dGhvcml6ZWQgdXNlIG9ubHkxODA2BgNVBAMTL1ZlcmlTaWduIFVuaXZlcnNh
+# bCBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5MB4XDTE2MDExMjAwMDAwMFoX
+# DTMxMDExMTIzNTk1OVowdzELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVj
+# IENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgw
+# JgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBMIIBIjANBgkq
+# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1mdWVVPnYxyXRqBoutV87ABrTxxrDKP
+# BWuGmicAMpdqTclkFEspu8LZKbku7GOz4c8/C1aQ+GIbfuumB+Lef15tQDjUkQbn
+# QXx5HMvLrRu/2JWR8/DubPitljkuf8EnuHg5xYSl7e2vh47Ojcdt6tKYtTofHjmd
+# w/SaqPSE4cTRfHHGBim0P+SDDSbDewg+TfkKtzNJ/8o71PWym0vhiJka9cDpMxTW
+# 38eA25Hu/rySV3J39M2ozP4J9ZM3vpWIasXc9LFL1M7oCZFftYR5NYp4rBkyjyPB
+# MkEbWQ6pPrHM+dYr77fY5NUdbRE6kvaTyZzjSO67Uw7UNpeGeMWhNwIDAQABo4IB
+# dzCCAXMwDgYDVR0PAQH/BAQDAgEGMBIGA1UdEwEB/wQIMAYBAf8CAQAwZgYDVR0g
+# BF8wXTBbBgtghkgBhvhFAQcXAzBMMCMGCCsGAQUFBwIBFhdodHRwczovL2Quc3lt
+# Y2IuY29tL2NwczAlBggrBgEFBQcCAjAZGhdodHRwczovL2Quc3ltY2IuY29tL3Jw
+# YTAuBggrBgEFBQcBAQQiMCAwHgYIKwYBBQUHMAGGEmh0dHA6Ly9zLnN5bWNkLmNv
+# bTA2BgNVHR8ELzAtMCugKaAnhiVodHRwOi8vcy5zeW1jYi5jb20vdW5pdmVyc2Fs
+# LXJvb3QuY3JsMBMGA1UdJQQMMAoGCCsGAQUFBwMIMCgGA1UdEQQhMB+kHTAbMRkw
+# FwYDVQQDExBUaW1lU3RhbXAtMjA0OC0zMB0GA1UdDgQWBBSvY9bKo06FcuCnvEHz
+# KaI4f4B1YjAfBgNVHSMEGDAWgBS2d/ppSEefUxLVwuoHMnYH0ZcHGTANBgkqhkiG
+# 9w0BAQsFAAOCAQEAdeqwLdU0GVwyRf4O4dRPpnjBb9fq3dxP86HIgYj3p48V5kAp
+# reZd9KLZVmSEcTAq3R5hF2YgVgaYGY1dcfL4l7wJ/RyRR8ni6I0D+8yQL9YKbE4z
+# 7Na0k8hMkGNIOUAhxN3WbomYPLWYl+ipBrcJyY9TV0GQL+EeTU7cyhB4bEJu8LbF
+# +GFcUvVO9muN90p6vvPN/QPX2fYDqA/jU/cKdezGdS6qZoUEmbf4Blfhxg726K/a
+# 7JsYH6q54zoAv86KlMsB257HOLsPUqvR45QDYApNoP4nbRQy/D+XQOG/mYnb5DkU
+# vdrk08PqK1qzlVhVBH3HmuwjA42FKtL/rqlhgTCCBUswggQzoAMCAQICEHvU5a+6
+# zAc/oQEjBCJBTRIwDQYJKoZIhvcNAQELBQAwdzELMAkGA1UEBhMCVVMxHTAbBgNV
+# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
+# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
+# IENBMB4XDTE3MTIyMzAwMDAwMFoXDTI5MDMyMjIzNTk1OVowgYAxCzAJBgNVBAYT
+# AlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3lt
+# YW50ZWMgVHJ1c3QgTmV0d29yazExMC8GA1UEAxMoU3ltYW50ZWMgU0hBMjU2IFRp
+# bWVTdGFtcGluZyBTaWduZXIgLSBHMzCCASIwDQYJKoZIhvcNAQEBBQADggEPADCC
+# AQoCggEBAK8Oiqr43L9pe1QXcUcJvY08gfh0FXdnkJz93k4Cnkt29uU2PmXVJCBt
+# MPndHYPpPydKM05tForkjUCNIqq+pwsb0ge2PLUaJCj4G3JRPcgJiCYIOvn6QyN1
+# R3AMs19bjwgdckhXZU2vAjxA9/TdMjiTP+UspvNZI8uA3hNN+RDJqgoYbFVhV9Hx
+# AizEtavybCPSnw0PGWythWJp/U6FwYpSMatb2Ml0UuNXbCK/VX9vygarP0q3InZl
+# 7Ow28paVgSYs/buYqgE4068lQJsJU/ApV4VYXuqFSEEhh+XetNMmsntAU1h5jlIx
+# Bk2UA0XEzjwD7LcA8joixbRv5e+wipsCAwEAAaOCAccwggHDMAwGA1UdEwEB/wQC
+# MAAwZgYDVR0gBF8wXTBbBgtghkgBhvhFAQcXAzBMMCMGCCsGAQUFBwIBFhdodHRw
+# czovL2Quc3ltY2IuY29tL2NwczAlBggrBgEFBQcCAjAZGhdodHRwczovL2Quc3lt
+# Y2IuY29tL3JwYTBABgNVHR8EOTA3MDWgM6Axhi9odHRwOi8vdHMtY3JsLndzLnN5
+# bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNybDAWBgNVHSUBAf8EDDAKBggrBgEF
+# BQcDCDAOBgNVHQ8BAf8EBAMCB4AwdwYIKwYBBQUHAQEEazBpMCoGCCsGAQUFBzAB
+# hh5odHRwOi8vdHMtb2NzcC53cy5zeW1hbnRlYy5jb20wOwYIKwYBBQUHMAKGL2h0
+# dHA6Ly90cy1haWEud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY2VyMCgG
+# A1UdEQQhMB+kHTAbMRkwFwYDVQQDExBUaW1lU3RhbXAtMjA0OC02MB0GA1UdDgQW
+# BBSlEwGpn4XMG24WHl87Map5NgB7HTAfBgNVHSMEGDAWgBSvY9bKo06FcuCnvEHz
+# KaI4f4B1YjANBgkqhkiG9w0BAQsFAAOCAQEARp6v8LiiX6KZSM+oJ0shzbK5pnJw
+# Yy/jVSl7OUZO535lBliLvFeKkg0I2BC6NiT6Cnv7O9Niv0qUFeaC24pUbf8o/mfP
+# cT/mMwnZolkQ9B5K/mXM3tRr41IpdQBKK6XMy5voqU33tBdZkkHDtz+G5vbAf0Q8
+# RlwXWuOkO9VpJtUhfeGAZ35irLdOLhWa5Zwjr1sR6nGpQfkNeTipoQ3PtLHaPpp6
+# xyLFdM3fRwmGxPyRJbIblumFCOjd6nRgbmClVnoNyERY3Ob5SBSe5b/eAL13sZgU
+# chQk38cRLB8AP8NLFMZnHMweBqOQX1xUiz7jM1uCD8W3hgJOcZ/pZkU/djGCAlow
+# ggJWAgEBMIGLMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jw
+# b3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UE
+# AxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQQIQe9Tlr7rMBz+hASME
+# IkFNEjALBglghkgBZQMEAgGggaQwGgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEE
+# MBwGCSqGSIb3DQEJBTEPFw0yMzA4MjEwODQ1MzlaMC8GCSqGSIb3DQEJBDEiBCCG
+# bHKJ8oDCfVMW2CGefCye14DaJfLldyEoR1Ubi6n+xDA3BgsqhkiG9w0BCRACLzEo
+# MCYwJDAiBCDEdM52AH0COU4NpeTefBTGgPniggE8/vZT7123H99h+DALBgkqhkiG
+# 9w0BAQEEggEAazohVj43SZteVMHSozBNf8dmgaoMvtSgSBhWwD6RkRnbpV6rftDq
+# 1XSmpHWDgzaxO6ndWU444w8VLmyafy5wBWRfgrOFguuX8G7kYz0YMgxcc6lxPBG2
+# VXYKwU8YkbFWG1kT0AKzFM11lbxsm79wwP+MZ7mf+KJV4bG2Gzwgw+QOOE1mo14L
+# QPHBSri3C5u1AaqntGvDX2dfQIpJClzCqTA3S3CzxRaG6phuH6RHQ8DP5bht2YYQ
+# U6sNQFFrFpsf2+Jj0wYJrjyFp8Ayt03gGoLwWT7R8cqc0JEjm8zHDu6rWowi1yII
+# 5/0oykRN+fwhQEg+mLTJ2eOSTJyo2L7uEA==
 # SIG # End signature block
