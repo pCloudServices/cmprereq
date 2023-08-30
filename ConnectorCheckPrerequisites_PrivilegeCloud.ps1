@@ -161,7 +161,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "24"
+[int]$versionNumber = "25"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -542,7 +542,7 @@ Function PrimaryDNSSuffix
         else
         {
             $result = $False
-            $errorMsg = "The logged in user domain: '$($env:userdnsdomain)' doesn't match the machine domain: '$PrimaryDNSSuffix'. Please see KB '000020063' on the customer support portal."
+            $errorMsg = "The logged in user domain: '$($env:userdnsdomain)' doesn't match the machine domain: '$PrimaryDNSSuffix'. Please see KB '000020063' on the customer support portal. (If this machine is not domain joined you need to run the script with -OutOfDomain Flag)."
         }
 		Write-LogMessage -Type Verbose -Msg "Finished PrimaryDNSSuffix"
 		
@@ -2422,14 +2422,30 @@ Function ConnectorManagementScripts{
                     }
                 Catch
                 {
-                    $err=$_.exception
-                    if($_.Exception.Response.StatusCode.value__ -eq 403){
-                        $actual = "403"
-                        $result = $true
-                        $errorMsg = ""
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
                     }
                     Else{
-                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr.message)"
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
                         $result = $false
                         $actual = $_.Exception.Response.StatusCode.value__
                     }
@@ -2492,14 +2508,30 @@ Function ConnectorManagementAssets{
                     }
                 Catch
                 {
-                    $err=$_.exception
-                    if($_.Exception.Response.StatusCode.value__ -eq 403){
-                        $actual = "403"
-                        $result = $true
-                        $errorMsg = ""
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
                     }
                     Else{
-                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr.message)"
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
                         $result = $false
                         $actual = $_.Exception.Response.StatusCode.value__
                     }
@@ -2560,14 +2592,30 @@ Function ConnectorManagementComponentRegistry{
                     }
                 Catch
                 {
-                    $err=$_.exception
-                    if($_.Exception.Response.StatusCode.value__ -eq 403){
-                        $actual = "403"
-                        $result = $true
-                        $errorMsg = ""
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
                     }
                     Else{
-                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr.message)"
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
                         $result = $false
                         $actual = $_.Exception.Response.StatusCode.value__
                     }
@@ -4428,11 +4476,12 @@ else
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 Pause
 #########################
+
 # SIG # Begin signature block
 # MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDZsDrKmIIv1QT6
-# eiYOxK+xNdaBcRBY2t5MvdtXia6BLaCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA7lUaZyIWJJWgQ
+# wk47GmvzICZ1mabRGbwD2i/4Qi6HyKCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4567,22 +4616,22 @@ Pause
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEINrg+rKWrN9rB4YwamT2EkWfhin+bd3EGZwfPAHf5YvwMA0GCSqGSIb3
-# DQEBAQUABIICAF0M6J80e/1q1rU2mliI+dA0am4k03U2ACV0hGZgVwbzpDO2WL3T
-# 0IVFEEfDISQoSXWk7/rcyzzUd6BpRAOt3LexD9LY16oJPJFFOpn6S/pFgf8wLMdE
-# xf4dqhG2FmitRgF1DWmXJGC5T0fPEuzl2v/PyTnKH7JW22hs4X8EqIxEKrN8/5k8
-# qd9kujqnyni4uUYsiJDiL9RTC2EYfKprv1zO/nnKuKkFqBvkK0wyEDHqEMBR+hFv
-# uCLhQbViD4IneAs17H0mdEpGcID6IHjJjtGVrNmfs/afD+xJEVtNuk5tCHxOxKFK
-# eLSd/HlLObE58ZrgyLSWS8Z+LiLxJGP68tC0qR3dh343aKGBLNzhDY4H8SvhKYtp
-# a3EmOYAqYB1vP5nhEq5yPqG/oE5IKoKn+frnLYi13+eUDr0ll/bzAQ0g29byyF5Z
-# H3A5LqPnOvkwA7SocimoUQhqj0ELY3onhyHmNxOIcXpq2ipgz8ug1uJ7LVrUfOPV
-# 2hggXkC0gKA1xt1mV84Hp9HnaqLK2JcinDF5aUQTYeWhdIc5VBQ5xOq/b70k2eZT
-# xYnCl6BgeiuoxAzm+kgRl5DaCIaB/obWzx1yhFA2Tzivfd4VLlCeDJxhLuFUsIgh
-# 1pY1KCvZeHMjVlq1tLefiedKdjnpmQfEVxPeOhufMOtOy4isKyriQt1goYIOLDCC
+# AQkEMSIEIPOlH3duWuGNruIMiEgrkld958yxEWaGBwF8HInVOQexMA0GCSqGSIb3
+# DQEBAQUABIICAHlsb9bqS2GQAR1uwbcZC2dZ8wTmRbwPrhql9MSXUUHLE9JQm5Kz
+# dwdaUpV9hwA3pvlCgKrorAYS/K7gyuXohYvV8VZ6UWpifVbkKq5RallBF/eTNNfd
+# LuWj79ZKIpl5bkciuRxmg2FMwctzd6e71jArwzEIVHjfKnyhBaAUcG9dOjXbl+LR
+# elY7bAbTL17lSphgTwWxshKNyr3sZIp4eQUlXO6+HU+qSkB6XuHjfIqIObbObYjt
+# 21yfrrJaGLAv73o0DgFBmry4eIuuy5qLBdtLv4NSHqQdtO6sfJYmKE3/4D71qWFC
+# j6lr8c697DSEuwi8kpXhZpvgu9NdlnsongMj12QDQSu6bdyIDxB1cdZUzvBI38/3
+# 9WATEn7awaGmru/TMRA7UTEZrFxzsXE4BK4PfFJKwYmW8kEN/zlmNs8ZuS0rddlf
+# gZVl4mWbxH3SrccYoIjw0H4RbO2Ec2ENOKyhnMRaZuCMAwdN9wONIXWW/G7G/g7m
+# IuZk1uS392Ufb1Qco4l8NEN73cD33svVEHWh5df5QiOY/uncr/ruPB8kd4e04uP9
+# RsAGPp3GHsNqnQuJQ2U3WcBDReJBOEUaQ2joHGAcRrrEs1UeIYzRRUWtt3JsDX8/
+# SPhzLfkxf4GztAbV1T3CQrDWuJYA6ktzK1/23l10YcvUnZQYlxalNI+SoYIOLDCC
 # DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
 # BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFLSxJ/hEXrOg/gb/6q4QSJ8whTN5AhUAzWaiSzD2
-# fQvooyQfr2c1p4xoIlwYDzIwMjMwODI0MTcxNjE3WjADAgEeoIGGpIGDMIGAMQsw
+# AQcXAzAhMAkGBSsOAwIaBQAEFBTimyu4aPDUW2XUt9xnDY8g2C/eAhUAsF4fPF+y
+# s2vM/v6sVfgA4uDGbCwYDzIwMjMwODMwMTAwNjAzWjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -4646,13 +4695,13 @@ Pause
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjMwODI0MTcxNjE3WjAvBgkqhkiG9w0BCQQxIgQg
-# f9wlnrD3BXTG3I9bDS1QpBijpy/5FhHAb+yt7BLL0XgwNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjMwODMwMTAwNjAzWjAvBgkqhkiG9w0BCQQxIgQg
+# FTLvTkBfqVhxKnW1C48CpJpJBnM1out1X92ATfPtJmcwNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBAIVNbD9ID3YQu1ZhQanhmRwDv2SXUM6x8yFsduWuLAYx0KJ3n7Uc
-# TzLX8CrOMizV4hwD8MqxvJna+LPU5vz0z2ocxBG1VpK0av5YTkfs9gH5TlzqgzgS
-# Jpju/0BqZ46/v0kT5KYt/pwBeLAlCmgLb1kRTfFOR2ghav09VIG3fCZiElZlNFbE
-# flSWGVJy1VaU9LDJyvTcJMSttmu2udxsJLPz2SSYFvoAfTYvQsEMg2+1v+dFTOsw
-# rdEoJk+7HsvN0Fgovr1JOt8Dqioh4KdxpCDB/Es2kZ3zcTA2Cl3eWWpztyC2pP+z
-# x1xZtSzIhLzWSGlbONfQlX5SfMvZSAFPFxo=
+# hvcNAQEBBIIBAHjUTkVAM3ACWc/gnWT7lHYm7C5iRC8gsO25vhpK4F9O9h3kv0ro
+# FLWipk2PfFITXaoybGvltwXf7TiHRrvUSrlfMsFgPIkywf4f97sC+23VU63prtwX
+# 1aQWlxjm2IAVqx685armKpFtbDvoUDULiS6G3Oh38u5msFKGHxRDsEwl4cXGnDXf
+# JMmIpIVx5VetoEePsbK6h0mjnXneN8OfQ1K642dYfi6rpg+KsHvyQiFCSIYmedkB
+# m4F9bpWGlEh+dttInu5hiRa//hBOhyA1mDas8iy03W2cmR6rweoBXKdr0rarwv0D
+# 6jJLEcqG+2JDWFLg8A8KFt5BXRblMnJVC6I=
 # SIG # End signature block
