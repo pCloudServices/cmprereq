@@ -77,7 +77,7 @@ $arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix","remoteApp
 $arrCheckPrerequisitesGeneral = @(
 "VaultConnectivity", #General
 "CustomerPortalConnectivity", #General
-#"CheckIdentityCustomURL",
+"CheckIdentityCustomURL",
 "OSVersion", #General
 "Processors", #General
 "Memory", #General
@@ -162,7 +162,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "26"
+[int]$versionNumber = "28"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -258,6 +258,7 @@ Function CPMConnectionTestFromTroubleshooting(){
     CPMConnectionTest
 }
 
+
 Function TestIdentityServiceAccount(){
 	Write-LogMessage -type Info -MSG "Begin TestIdentityServiceAccount." -Early
 	Write-Host "This check will perform a basic API authentication call and will return success or fail" -ForegroundColor Magenta
@@ -296,57 +297,59 @@ Function TestIdentityServiceAccount(){
 		$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
 		Write-LogMessage -type Info -MSG "Portal URL set: $BasePlatformURL" -Early
 		#Platform Identity API
-		$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue
-		$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
-		
-		$IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
-		Write-LogMessage -type Info -MSG "Identity URL set: $IdaptiveBasePlatformURL" -Early
-		$IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
-		$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
-		$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
-		$LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
+		$IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+        if($IdentityHeaderURL -like "*Error*"){
+            Write-LogMessage -type Error -MSG "Error accessing URL '$($BasePlatformURL)' $($IdentityHeaderURL)"
+            return
+        }Else{
+		    $IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
+		    Write-LogMessage -type Info -MSG "Identity URL set: $IdaptiveBasePlatformURL" -Early
+		    $IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
+		    $startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
+		    $startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
+		    $LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
 
 
-		#Begin Start Authentication Process
-		Write-LogMessage -type Info -MSG "Begin Start Authentication Process: $startPlatformAPIAuth" -Early
-        $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
-		$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
-		$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10
-		$IdaptiveResponse.Result.Challenges.mechanisms
-		
-        if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
-        {
-		    #Begin Advanced Authentication Process
-		    Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process: $startPlatformAPIAdvancedAuth" -Early
-		    $startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
-		    $AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
-		    $AnswerToResponse.Result
-        }
-        Else
-        {
-            Write-Host "Did not receive challenge response, check response recieved below:" -ForegroundColor Red
-            $IdaptiveResponse
-            # Tenant has Custom URL enabled, we don't support it yet.
-            if($IdaptiveResponse.Result.PodFqdn){
-                Write-LogMessage -type Warning -MSG "Hint: It looks like you have configured customized URL in Identity Administration, please disable it and try again (wait at least 10 min for changes to take affect)."
-                write-host "Hint: Navigate to Identity Administration -> Settings -> Customization -> Tenant URLs -> Delete the Custom URL and make sure default is '$($IdentityHeaderURL)'" -ForegroundColor Yellow
+		    #Begin Start Authentication Process
+		    Write-LogMessage -type Info -MSG "Begin Start Authentication Process: $startPlatformAPIAuth" -Early
+            $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
+		    $startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
+		    $IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10
+		    $IdaptiveResponse.Result.Challenges.mechanisms
+		    
+            if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
+            {
+		        #Begin Advanced Authentication Process
+		        Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process: $startPlatformAPIAdvancedAuth" -Early
+		        $startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+		        $AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
+		        $AnswerToResponse.Result
             }
-        }
+            Else
+            {
+                Write-Host "Did not receive challenge response, check response recieved below:" -ForegroundColor Red
+                $IdaptiveResponse
+                # Tenant has Custom URL enabled, we don't support it yet.
+                if($IdaptiveResponse.Result.PodFqdn){
+                    Write-LogMessage -type Warning -MSG "Hint: It looks like you have configured customized URL in Identity Administration, please disable it and try again (wait at least 10 min for changes to take affect)."
+                    write-host "Hint: Navigate to Identity Administration -> Settings -> Customization -> Tenant URLs -> Delete the Custom URL and make sure default is '$($IdentityHeaderURL)'" -ForegroundColor Yellow
+                }
+            }
 	
-		if($AnswerToResponse.Result.Summary -eq "LoginSuccess"){
-			Write-Host "Final Identity Result: Success!" -ForegroundColor Green
-			#LogOff
-			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
-			$logoff = Invoke-RestMethod -Uri $LogoffPlatform -Method Post -Headers $IdentityHeaders
-		}Else{
-			Write-Host "Final Identity Result: Failed!" -ForegroundColor Red
-				if($IdaptiveResponse.Result.Challenges.mechanisms.AnswerType.Count -gt 1){
-					Write-LogMessage -type Info -MSG "Challenge mechanisms greater than one:" -Early
-					$IdaptiveResponse.Result.Challenges.mechanisms.AnswerType
-					Write-LogMessage -type Warning -MSG "Hint: Looks like MFA is enabled, make sure it's disabled."
-				}
-			}
-	
+		    if($AnswerToResponse.Result.Summary -eq "LoginSuccess"){
+		    	Write-Host "Final Identity Result: Success!" -ForegroundColor Green
+		    	#LogOff
+		    	Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
+		    	$logoff = Invoke-RestMethod -Uri $LogoffPlatform -Method Post -Headers $IdentityHeaders
+		    }Else{
+		    	Write-Host "Final Identity Result: Failed!" -ForegroundColor Red
+		    		if($IdaptiveResponse.Result.Challenges.mechanisms.AnswerType.Count -gt 1){
+		    			Write-LogMessage -type Info -MSG "Challenge mechanisms greater than one:" -Early
+		    			$IdaptiveResponse.Result.Challenges.mechanisms.AnswerType
+		    			Write-LogMessage -type Warning -MSG "Hint: Looks like MFA is enabled, make sure it's disabled."
+		    		}
+		    	}
+	        }
 	}catch
 	{
 		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri))"
@@ -356,37 +359,26 @@ Function TestIdentityServiceAccount(){
 
 			Write-LogMessage -type Info -MSG "Also testing directly against Privilege Cloud API." -Early
 			Start-Sleep 3
-			$basePVWA = "https://$portalSubDomainURL.privilegecloud.cyberark.cloud"
+           $basePVWA = "https://$portalSubDomainURL.privilegecloud.cyberark.cloud"
 			$pvwaLogoff = "$basePVWA/passwordvault/api/Auth/logoff"
 			$basePVWALoginCyberArk = "$basePVWA/passwordvault/api/Auth/CyberArk/Logon"
 			$pvwaLogonBody = @{ username = $creds.UserName; password = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+            $pvwaLogonToken = $null
 		# Login to PVWA
 		Try{
 			Write-LogMessage -type Info -MSG "Begin Login: $basePVWALoginCyberArk" -Early
 			$pvwaLogonToken = Invoke-RestMethod -Method Post -Uri $basePVWALoginCyberArk -Body $pvwaLogonBody -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable pvwaResp
-			$pvwaLogonHeader = @{Authorization = $pvwaLogonToken }
-		
-			# Get current logged on user details:
-
-			$getCurrentUser = Invoke-RestMethod -Uri "$basePVWA/passwordvault/WebServices/PIMServices.svc/User" -Method Get -Headers $pvwaLogonHeader -ContentType "application/json"
-			Write-LogMessage -type Info -MSG "Getting current user details: `"$basePVWA/passwordvault/WebServices/PIMServices.svc/User`"" -Early
-			if(($getCurrentUser.Disabled -eq "True") -or ($getCurrentUser.Suspended -eq "True")){
-				Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
-				Write-Host "User is Suspended/Disabled in the Vault!" -ForegroundColor Yellow
-				Write-Host "Hint: Perform `"Set Password`" and `"MFA Unlock`" from Identity Portal and try again." -ForegroundColor Yellow
-			}
-			else
+            if($pvwaLogonToken){
+                Write-Host "Final Privilege Cloud Result: Success!" -ForegroundColor Green
+            }
+            else
 			{
-				$getCurrentUser
-				Write-Host "Final Privilege Cloud Result: Success!" -ForegroundColor Green
+				Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
+                $pvwaResp
 			}
-
-			#logoff
-			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
-			$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader
 		}Catch
 		{
-            Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri))"
+            Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)) $pvwaResp"
             Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
 			#Lets check if identity was ok, then if vault is not, we know the pw is correct but user is most likely suspended/disabled.
 			if(($AnswerToResponse.Result.Summary -eq "LoginSuccess") -and ($pvwaResp -like "*Authentication failure*")){
@@ -395,7 +387,12 @@ Function TestIdentityServiceAccount(){
 				Write-Host "Hint: Perform `"Set Password`" and `"MFA Unlock`" from Identity Portal and try again." -ForegroundColor Yellow
 			}
 		}
-	$creds = $null
+        Finally{
+            #logoff
+			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
+			Try{$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader}Catch{}
+            $creds = $null
+        }
 	Write-LogMessage -type Info -MSG "Finish TestIdentityServiceAccount." -Early
 	}
 
@@ -2397,39 +2394,44 @@ Function CheckIdentityCustomURL{
         Try{
         	# PlatformParams
 	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
-	    	# Platform Identity API
-	    	$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue -ErrorVariable identityErr -UseBasicParsing
-	    	$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
-	    	
-	    	$IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
-	    	$IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
-	    	$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
-	    	$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
+	    	# Retrieve Identity from redirect
+            $IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+            if($IdentityHeaderURL -like "*Error*"){
+                $errorMsg = "Error accessing URL '$($BasePlatformURL)' $($IdentityHeaderURL)"
+                $result = $false
+                $actual = $false
+            }Else{
+	    	    $IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
+	    	    $IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
+	    	    $startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
+	    	    $startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
 
-	    	# Begin Start Authentication Process
-            $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
-	    	$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = "TestDummyPrereqScript" ; Version = "1.0"} | ConvertTo-Json -Compress
-	    	$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10 -ErrorVariable identityErr
-	    	
-            if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
-            {
-                $actual = $true
-                $result = $true
+	    	    # Begin Start Authentication Process
+                $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
+	    	    $startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = "TestDummyPrereqScript" ; Version = "1.0"} | ConvertTo-Json -Compress
+	    	    $IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10 -ErrorVariable identityErr
+	    	    
+                if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
+                {
+                    $actual = $true
+                    $result = $true
 
-            }
-            Else
-            {
-                # Tenant has Custom URL enabled, we don't support it yet.
-                if($IdaptiveResponse.Result.PodFqdn){
-                    $actual = $false
-                    $result = $false
-                    $errorMsg = "It looks like you have configured customized URL in Identity Administration, please disable it and try again (more info here: https://docs.cyberark.com/Product-Doc/OnlineHelp/Idaptive/Latest/en/Content/GetStarted/CustomDomain.htm)."
                 }
                 Else
                 {
-                    # catch all other errors, just display whatever we see in result.
-                    $actual = $IdaptiveResponse.Result
-                }                
+                    # Tenant has Custom URL enabled, we don't support it yet.
+                    if($IdaptiveResponse.Result.PodFqdn){
+                        $actual = $false
+                        $result = $false
+                        $errorMsg = "It looks like you have configured customized URL in Identity Administration, please disable it and try again (more info here: https://docs.cyberark.com/Product-Doc/OnlineHelp/Idaptive/Latest/en/Content/GetStarted/CustomDomain.htm)."
+                    }
+                    Else
+                    {
+                        # catch all other errors, just display whatever we see in result.
+                        $actual = $IdaptiveResponse.Result
+                        $errorMsg = $IdaptiveResponse.Result
+                    }                
+                }
             }
         Write-LogMessage -Type Verbose -Msg "Finished CheckIdentityCustomURL..."
         }
@@ -2475,46 +2477,48 @@ Function ConnectorManagementScripts{
     # skip check if portalUrl is empty
     if(![string]::IsNullOrEmpty($portalSubDomainURL)){
         Try{
-        	# PlatformParams
 	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
-	    	# Platform Identity API
-	    	$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue -UseBasicParsing -ErrorVariable respErr 
-	    	$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
-	    	
-            # Find Identity Region
-            $GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
+	    	# Retrieve Identity from redirect
+            $IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+            if($IdentityHeaderURL -like "*Error*"){
+                $errorMsg = "Error accessing URL '$($BasePlatformURL)' $($IdentityHeaderURL)"
+            }Else{
+                # Find Identity Region
+                $GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
 
-            # Select region Name, so we can match it vs exception regions below
-            $searchRegion = $GetTenantDetails.Result.Region
+                # Select region Name, so we can match it vs exception regions below
+                $searchRegion = $GetTenantDetails.Result.Region
 
-            # Special exception for CM regions operated elsewhere.
-            if($searchRegion -eq "Eu South"){
-                $searchRegion = "Frankfurt"
-            }
-            # Special exception for CM regions operated elsewhere.
-            if($searchRegion -eq "ap-southeast-3"){ # Jakarta
-                $searchRegion = "AP Southeast" # Singapore
-            }
-
-            # Special exception for Australia and India since Identity uses same region name for them, we can distinguish by pod
-            if($searchRegion -eq "Asia Pacific"){
-                if($GetTenantDetails.Result.Name -like "pod1302*" -or $GetTenantDetails.Result.Name -like "pod1306*")
-                {
-                    $searchRegion = "Sydney"
+                # Special exception for CM regions operated elsewhere.
+                if($searchRegion -eq "Eu South"){
+                    $searchRegion = "Frankfurt"
                 }
-                Else{
-                    $searchRegion = "Asia Pacific"
+                # Special exception for CM regions operated elsewhere.
+                if($searchRegion -eq "ap-southeast-3"){ # Jakarta
+                    $searchRegion = "AP Southeast" # Singapore
                 }
-                   
+
+                # Special exception for Australia and India since Identity uses same region name for them, we can distinguish by pod
+                if($searchRegion -eq "Asia Pacific"){
+                    if($GetTenantDetails.Result.Name -like "pod1302*" -or $GetTenantDetails.Result.Name -like "pod1306*")
+                    {
+                        $searchRegion = "Sydney"
+                    }
+                    Else{
+                        $searchRegion = "Asia Pacific"
+                    }
+                       
+                }
+
+                    # Match region from list and get region code.
+                    $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion} | select -ExpandProperty regionCode
             }
 
-            # Match region from list and get region code.
-            $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion} | select -ExpandProperty regionCode
 
             if([string]::IsNullOrEmpty($region)){
-                Write-LogMessage -Warning -msg "Couldn't retrieve region from https://$($IdentityHeaderURL)/sysinfo/version try browsing to it and input it manually"
+                Write-LogMessage -type Warning -msg "Error retrieving identity region via redirect of '$($BasePlatformURL)': $($IdentityHeaderURL)"
                 start-sleep 5
-                Write-Host "Press ENTER to select region"
+                Write-Host "Select region manually"
                 Pause
                 $searchRegion = $availableRegions | Out-GridView -PassThru
                 $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion.RegionName} | select -ExpandProperty regionCode
@@ -2918,19 +2922,20 @@ function CheckEndpointProtectionServices(){
     
     Try
     {
+        $allservices = Get-WmiObject win32_service | select * -ErrorAction SilentlyContinue
         foreach ($service in $endpointProtectionServices)
         {
-            $serviceStatus = Get-Service -Name $service -ErrorAction SilentlyContinue
+            $serviceStatus = $allservices | where {$_.description -like $service}
             if ($serviceStatus)
             {
-                if ($serviceStatus.Status -eq "Running")
+                if ($serviceStatus.state -eq "Running")
                 {
-                    $errorMsg = "Detected AV/ATP Service '$($serviceStatus.DisplayName)': Running. Note that we advise to turn off any AV/ATP agents for the duration of installation/upgrades, various AV/ATP agents are known to prevent execution, delete files, prevent NTFS permissions changes or block commands. Post operation we strongly advise to have these services BACK on and running. In some rare use cases, it's not enough to simply stop the service, it will keep failing the installation until the AV agent is completely uninstalled, take that into consideration, each AV acts differently."
+                    $errorMsg = "Detected AV/ATP Service '$($serviceStatus.DisplayName)': Running. Note that we advise to turn off any AV/ATP agents for the duration of installation/upgrades, various AV/ATP agents are known to prevent execution, delete files, prevent NTFS permissions changes or block commands. Post operation we strongly advise to have these services BACK on and running. In some rare use cases, it's not enough to simply stop the service, it will keep failing the installation until the AV agent is completely uninstalled, take that into consideration, each AV acts differently. `nhttps://docs.cyberark.com/privilege-cloud-shared-services/Latest/en/Content/Privilege%20Cloud/PrivCloud-install-antivirus.htm"
                     $result = $false
                     $actual = $serviceStatus
                 }
                 # service was found but stopped.
-                Elseif($serviceStatus.Status -eq "Stopped")
+                Elseif($serviceStatus.state -eq "Stopped")
                 {
                     
                     $result = $true 
@@ -3700,6 +3705,51 @@ Function Get-Choice{
     return $result
 }
 
+Function Get-IdentityURL($idURL) {
+    Add-Type -AssemblyName System.Net.Http
+
+    Function CreateHttpClient($allowAutoRedirect) {
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.AllowAutoRedirect = $allowAutoRedirect
+        return New-Object System.Net.Http.HttpClient($handler)
+    }
+
+    $client = CreateHttpClient($true)
+
+    try {
+        $task = $client.GetAsync($idURL)
+        $task.Wait()  # Ensures the task completes and exceptions are thrown if any.
+
+        if ($task.IsCompleted) {
+            $response = $task.Result
+
+            if (($response.StatusCode -ge 300 -and $response.StatusCode -lt 400) -or ($response.StatusCode -eq "OK")) {
+                return $response.RequestMessage.RequestUri.Host
+            } else {
+                return "Unexpected status code: $($response.StatusCode)"
+            }
+        } else {
+            return "Task did not complete successfully."
+        }
+    }
+    catch {
+        # Extracting detailed exception message from AggregateException
+        $exception = $_.Exception
+        while ($exception.InnerException) {
+            $exception = $exception.InnerException
+        }
+        
+        # Return the extracted exception message
+        return "Error: $($exception.Message)"
+    }
+    finally {
+        if ($client -ne $null) {
+            $client.Dispose()
+        }
+    }
+}
+
+
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: CPMConnectionTest
@@ -3852,6 +3902,39 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             Else{
                 $stdout | Write-Host -ForegroundColor DarkGray
                 Write-LogMessage -type Success -MSG "Connection is OK!"
+                $dateTEST = $(get-date -format yyyyMMdd) + "_" + $(get-date -format HHmm)
+                $machineNametrim = $($env:COMPUTERNAME).Substring($env:COMPUTERNAME.Length - 4)
+                $dummypass = "Tdsa6sdf4gkj2gdo!"
+                $dummyuser = "CPMConnectionTestPass_$($dateTEST)_$($machineNametrim)"
+                $logonBody = @{ username = "$($dummyuser)" ; password = "$($dummypass)" } | ConvertTo-Json -Compress
+                Try
+                {
+                    $targetUriString = "https://$($VaultIP.TrimStart("vault-"))/passwordvault/api/Auth/CyberArk/Logon"
+                    $targetUri = [Uri]$targetUriString
+                    $systemProxy = [System.Net.WebRequest]::GetSystemWebProxy()
+                    $systemProxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials # Use this if your proxy requires authentication
+                    $proxyUri = $systemProxy.GetProxy($targetUri)
+                    
+                    if ($proxyUri.Host -ne $targetUri.Host)
+                    {
+                        # If the hosts are different, use the proxy
+                        $response = Invoke-RestMethod -Uri $targetUriString -ContentType "application/json" -Method Post -ErrorVariable pvwaERR -Body $logonBody -Proxy $proxyUri.AbsoluteUri
+                    }
+                    else
+                    {
+                        # If the hosts are the same, don't use the proxy
+                        $response = Invoke-RestMethod -Uri $targetUriString -ContentType "application/json" -Method Post -ErrorVariable pvwaERR -Body $logonBody
+                    }
+                }
+                Catch
+                {
+                    if($pvwaERR -like "*Authentication failure for User*"){
+                        Write-LogMessage -type Success -MSG "Sent a signal to our backend of this sucessful test @ TIME: $($dateTEST)"
+                    }Else{
+                        Write-LogMessage -type Warning -MSG "Failed to send a dummy string to CyberArk backend to signal that your prereq passed successfully, that's ok its optional anyway."
+                    }
+                        
+                }
                 Write-LogMessage -type Success -MSG "If you want to rerun this check in the future, run the script with -CPMConnectionTest or -Troubleshooting."
 
             # Add entry to ini file that this test passed and skip it from now on.
@@ -4441,19 +4524,19 @@ Function Get-LogoHeader {
         $c = "white"  # Default color
 
         if ($i % 2 -eq 0) {
-            $c = "black"
+            $c = "darkred"
         }
         elseif ($i % 3 -eq 0) {
-            $c = "cyan"
+            $c = "white"
         }
         elseif ($i % 5 -eq 0) {
-            $c = "green"
+            $c = "white"
         }
         elseif ($i % 7 -eq 0) {
-            $c = "magenta"
+            $c = "red"
         }
         elseif ($i % 11 -eq 0) {
-            $c = "yellow"
+            $c = "white"
         }
         elseif ($i % 13 -eq 0) {
             $c = "red"
@@ -4598,12 +4681,11 @@ else
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 Pause
 #########################
-
 # SIG # Begin signature block
-# MIIqRQYJKoZIhvcNAQcCoIIqNjCCKjICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCQHzG8E1IAVyo+
-# efUhs2zPYzkgk5Y75663VCrsDkYTXKCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAlVt7IGuWg4tvw
+# 19Jmr9VT9jdbZcP4sOeCp7JP3ADtlKCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4733,97 +4815,97 @@ Pause
 # oZ6wZE9s0guXjXwwWfgQ9BSrEHnVIyKEhzKq7r7eo6VyjwOzLXLSALQdzH66cNk+
 # w3yT6uG543Ydes+QAnZuwQl3tp0/LjbcUpsDttEI5zp1Y4UfU4YA18QbRGPD1F9y
 # wjzg6QqlDtFeV2kohxa5pgyV9jOyX4/x0mu74qADxWHsZNVvlRLMUZ4zI4y3KvX8
-# vZsjJFVKIsvyCgyXgNMM5Z4xghFEMIIRQAIBATBsMFwxCzAJBgNVBAYTAkJFMRkw
+# vZsjJFVKIsvyCgyXgNMM5Z4xghFFMIIRQQIBATBsMFwxCzAJBgNVBAYTAkJFMRkw
 # FwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTIwMAYDVQQDEylHbG9iYWxTaWduIEdD
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIIehdyWoW+DAoiPfjLOHdY9DNCybSi41B4mp6m4AnFPMMA0GCSqGSIb3
-# DQEBAQUABIICAAbVigOgF75tvs5IWL2PKQFASb5RzaN5adXmHiyeuhmKW4i0YodA
-# 17ew+6+hkcgCOgHpIVZfnKqHR1IX4z6k+w1D9DJe9d/9GIb/xgit0pMWOfB6f++1
-# H+JFwt7lM0bg+My+IiPaOJ67Ils0MuI25Bv7qA6evo9tOJDplQd1njh9mYqA1c0/
-# JCp2tJ5uB/HgL7zmy/JJmjDiYO6+jIcbG9zBmQsC1Y+K3zG8WJ/BfrCS9mtfMJBH
-# WelljlgLmIcKESPKLTXywoWK7oDMsAO/PdIXQC6COjub+ktRYu5dsveKg8ZNoqdp
-# jXv2HXa+yc/2uzyepD76Hq9Kqv+jWzn+MDfuGXJkM6FGZ5/n3Uq5UfYAYoc/+goW
-# 21WPAXZJ1bURIQdpS+Z9PYuWHdVOsQxOg4Mawx4dCekxVTJnkdt6wMyUfb0gU2L4
-# zhO04/zuiVwK3WZVgt7QSsVB0rXxq1/PQndaFvaC36TPoZobNB4h+Yz9Bfyu+hi1
-# +oEmfuw5qZoXjgRDnGz5R+anUYlq5nH890is3H1xbAHiQch7cZOHlatHnp+4HL2Y
-# F45qHh/oBbjJY3pe3zgE+ULHx1zeHxbYG68xroDxhdrCHBTV1hGUuBLMaXv5VL/Z
-# EB9Upjib7L65ONdrx/m0u+BOQ8lYKhBQqf+AZP6XcQdFIDvrSwGTFZpOoYIOKzCC
-# DicGCisGAQQBgjcDAwExgg4XMIIOEwYJKoZIhvcNAQcCoIIOBDCCDgACAQMxDTAL
-# BglghkgBZQMEAgEwgf4GCyqGSIb3DQEJEAEEoIHuBIHrMIHoAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFBNgLd/E1sBZzlPd0L3OCQQGPPyxAhQkXktNCIxi
-# A2YJy6pW5QPlliYzEBgPMjAyMzEwMDMwODQzMzNaMAMCAR6ggYakgYMwgYAxCzAJ
-# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
-# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazExMC8GA1UEAxMoU3ltYW50ZWMgU0hB
-# MjU2IFRpbWVTdGFtcGluZyBTaWduZXIgLSBHM6CCCoswggU4MIIEIKADAgECAhB7
-# BbHUSWhRRPfJidKcGZ0SMA0GCSqGSIb3DQEBCwUAMIG9MQswCQYDVQQGEwJVUzEX
-# MBUGA1UEChMOVmVyaVNpZ24sIEluYy4xHzAdBgNVBAsTFlZlcmlTaWduIFRydXN0
-# IE5ldHdvcmsxOjA4BgNVBAsTMShjKSAyMDA4IFZlcmlTaWduLCBJbmMuIC0gRm9y
-# IGF1dGhvcml6ZWQgdXNlIG9ubHkxODA2BgNVBAMTL1ZlcmlTaWduIFVuaXZlcnNh
-# bCBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5MB4XDTE2MDExMjAwMDAwMFoX
-# DTMxMDExMTIzNTk1OVowdzELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVj
-# IENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgw
-# JgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBMIIBIjANBgkq
-# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAu1mdWVVPnYxyXRqBoutV87ABrTxxrDKP
-# BWuGmicAMpdqTclkFEspu8LZKbku7GOz4c8/C1aQ+GIbfuumB+Lef15tQDjUkQbn
-# QXx5HMvLrRu/2JWR8/DubPitljkuf8EnuHg5xYSl7e2vh47Ojcdt6tKYtTofHjmd
-# w/SaqPSE4cTRfHHGBim0P+SDDSbDewg+TfkKtzNJ/8o71PWym0vhiJka9cDpMxTW
-# 38eA25Hu/rySV3J39M2ozP4J9ZM3vpWIasXc9LFL1M7oCZFftYR5NYp4rBkyjyPB
-# MkEbWQ6pPrHM+dYr77fY5NUdbRE6kvaTyZzjSO67Uw7UNpeGeMWhNwIDAQABo4IB
-# dzCCAXMwDgYDVR0PAQH/BAQDAgEGMBIGA1UdEwEB/wQIMAYBAf8CAQAwZgYDVR0g
-# BF8wXTBbBgtghkgBhvhFAQcXAzBMMCMGCCsGAQUFBwIBFhdodHRwczovL2Quc3lt
-# Y2IuY29tL2NwczAlBggrBgEFBQcCAjAZGhdodHRwczovL2Quc3ltY2IuY29tL3Jw
-# YTAuBggrBgEFBQcBAQQiMCAwHgYIKwYBBQUHMAGGEmh0dHA6Ly9zLnN5bWNkLmNv
-# bTA2BgNVHR8ELzAtMCugKaAnhiVodHRwOi8vcy5zeW1jYi5jb20vdW5pdmVyc2Fs
-# LXJvb3QuY3JsMBMGA1UdJQQMMAoGCCsGAQUFBwMIMCgGA1UdEQQhMB+kHTAbMRkw
-# FwYDVQQDExBUaW1lU3RhbXAtMjA0OC0zMB0GA1UdDgQWBBSvY9bKo06FcuCnvEHz
-# KaI4f4B1YjAfBgNVHSMEGDAWgBS2d/ppSEefUxLVwuoHMnYH0ZcHGTANBgkqhkiG
-# 9w0BAQsFAAOCAQEAdeqwLdU0GVwyRf4O4dRPpnjBb9fq3dxP86HIgYj3p48V5kAp
-# reZd9KLZVmSEcTAq3R5hF2YgVgaYGY1dcfL4l7wJ/RyRR8ni6I0D+8yQL9YKbE4z
-# 7Na0k8hMkGNIOUAhxN3WbomYPLWYl+ipBrcJyY9TV0GQL+EeTU7cyhB4bEJu8LbF
-# +GFcUvVO9muN90p6vvPN/QPX2fYDqA/jU/cKdezGdS6qZoUEmbf4Blfhxg726K/a
-# 7JsYH6q54zoAv86KlMsB257HOLsPUqvR45QDYApNoP4nbRQy/D+XQOG/mYnb5DkU
-# vdrk08PqK1qzlVhVBH3HmuwjA42FKtL/rqlhgTCCBUswggQzoAMCAQICEHvU5a+6
-# zAc/oQEjBCJBTRIwDQYJKoZIhvcNAQELBQAwdzELMAkGA1UEBhMCVVMxHTAbBgNV
-# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
-# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
-# IENBMB4XDTE3MTIyMzAwMDAwMFoXDTI5MDMyMjIzNTk1OVowgYAxCzAJBgNVBAYT
-# AlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3lt
-# YW50ZWMgVHJ1c3QgTmV0d29yazExMC8GA1UEAxMoU3ltYW50ZWMgU0hBMjU2IFRp
-# bWVTdGFtcGluZyBTaWduZXIgLSBHMzCCASIwDQYJKoZIhvcNAQEBBQADggEPADCC
-# AQoCggEBAK8Oiqr43L9pe1QXcUcJvY08gfh0FXdnkJz93k4Cnkt29uU2PmXVJCBt
-# MPndHYPpPydKM05tForkjUCNIqq+pwsb0ge2PLUaJCj4G3JRPcgJiCYIOvn6QyN1
-# R3AMs19bjwgdckhXZU2vAjxA9/TdMjiTP+UspvNZI8uA3hNN+RDJqgoYbFVhV9Hx
-# AizEtavybCPSnw0PGWythWJp/U6FwYpSMatb2Ml0UuNXbCK/VX9vygarP0q3InZl
-# 7Ow28paVgSYs/buYqgE4068lQJsJU/ApV4VYXuqFSEEhh+XetNMmsntAU1h5jlIx
-# Bk2UA0XEzjwD7LcA8joixbRv5e+wipsCAwEAAaOCAccwggHDMAwGA1UdEwEB/wQC
-# MAAwZgYDVR0gBF8wXTBbBgtghkgBhvhFAQcXAzBMMCMGCCsGAQUFBwIBFhdodHRw
-# czovL2Quc3ltY2IuY29tL2NwczAlBggrBgEFBQcCAjAZGhdodHRwczovL2Quc3lt
-# Y2IuY29tL3JwYTBABgNVHR8EOTA3MDWgM6Axhi9odHRwOi8vdHMtY3JsLndzLnN5
-# bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNybDAWBgNVHSUBAf8EDDAKBggrBgEF
-# BQcDCDAOBgNVHQ8BAf8EBAMCB4AwdwYIKwYBBQUHAQEEazBpMCoGCCsGAQUFBzAB
-# hh5odHRwOi8vdHMtb2NzcC53cy5zeW1hbnRlYy5jb20wOwYIKwYBBQUHMAKGL2h0
-# dHA6Ly90cy1haWEud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY2VyMCgG
-# A1UdEQQhMB+kHTAbMRkwFwYDVQQDExBUaW1lU3RhbXAtMjA0OC02MB0GA1UdDgQW
-# BBSlEwGpn4XMG24WHl87Map5NgB7HTAfBgNVHSMEGDAWgBSvY9bKo06FcuCnvEHz
-# KaI4f4B1YjANBgkqhkiG9w0BAQsFAAOCAQEARp6v8LiiX6KZSM+oJ0shzbK5pnJw
-# Yy/jVSl7OUZO535lBliLvFeKkg0I2BC6NiT6Cnv7O9Niv0qUFeaC24pUbf8o/mfP
-# cT/mMwnZolkQ9B5K/mXM3tRr41IpdQBKK6XMy5voqU33tBdZkkHDtz+G5vbAf0Q8
-# RlwXWuOkO9VpJtUhfeGAZ35irLdOLhWa5Zwjr1sR6nGpQfkNeTipoQ3PtLHaPpp6
-# xyLFdM3fRwmGxPyRJbIblumFCOjd6nRgbmClVnoNyERY3Ob5SBSe5b/eAL13sZgU
-# chQk38cRLB8AP8NLFMZnHMweBqOQX1xUiz7jM1uCD8W3hgJOcZ/pZkU/djGCAlow
-# ggJWAgEBMIGLMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jw
-# b3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UE
-# AxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQQIQe9Tlr7rMBz+hASME
-# IkFNEjALBglghkgBZQMEAgGggaQwGgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEE
-# MBwGCSqGSIb3DQEJBTEPFw0yMzEwMDMwODQzMzNaMC8GCSqGSIb3DQEJBDEiBCAH
-# zXh2ps9GZJYEZu77zd2JnYaMLoBpoWK8OiJhZwWOrzA3BgsqhkiG9w0BCRACLzEo
-# MCYwJDAiBCDEdM52AH0COU4NpeTefBTGgPniggE8/vZT7123H99h+DALBgkqhkiG
-# 9w0BAQEEggEARSJoA1x+twek5FzKYsCTxdM5UhJIy6xCM0AT3zDNxTTX8lpcR8U+
-# mnFKEXbm4oJJoIkYMDmLIeeFii7Hxh11Kc5RmCMT2ZFKqzcezfIoRXWH+n7Foq2+
-# 5VUuM373KmjlD+MjJqGjSXve9mfcT1iuXv2nMUDPF2rLMStNMoZTgjpwVxgENZwQ
-# Zl/cE8aV6TiMcU296apJSiB2/5dsufmFe1CDDr3cxw/EwyOjZETjx0g6RybDTTR6
-# hsxbNTPEIW3QxjY8IEUZmN3z3eQu+D/VZU31Zt7fGeTYTphMeYdwdKURFbUDewJS
-# Iw6cvd0OJkbnAu0CBEvMrsnVYCCNIPUjtQ==
+# AQkEMSIEIHpap7JddzPof7A/FwsorVsPT7eD1/u35REXaVJWi0YyMA0GCSqGSIb3
+# DQEBAQUABIICANMIyjK5IvlGGqSovySJgXCdoOwteOUryPBx/9/2mMCCLJVStydG
+# Oyo4o6wkCrIRmiqiP3zfhJjOhudi0v5Rgw4CDiHC9S5nJpUEoUhLBuQpKRGqHnwT
+# mBy2uBELT9svAkraKTSV1tb/hziWSCVfShRjQmdt08Lk55a9sF1PU15D9h0EPw5D
+# vvlB4Q0Z314KyLDVdfJjsJT0YWtByh8f0vUBvmnIpVzBnkMRu/1Tc13nJ36ampb0
+# 8s+rCC2xAK/i1s3uBAcKXfDrTnKswIp6xp0bGdSByvduCJIeFknFqxhJmgPFU8dg
+# EXp6aI/TxHxQqwXcUn0Kv7vIvk9Fhy/OI6IIs9Dkk3En2mZgDOi6KID1wlm18pvL
+# i8jK29QIz0oYyUL+CrmvAHs7Me+MlH5G9D3nOpx59EkyBhfVBD3UOTM9HWt66cLD
+# BT3uJdlj/dbDQ+IaBfQfakQ4U9hnj30cxkjtP4T3T6NigjxIwBe80EztPr3asXwq
+# T2Rbkx84ZJAdkbt/66y45GCj3jgr9wgMMxsW2f/flzAqbTQ3s1CDEWoUZpsr4GBj
+# 3wB74fo8fOLc4SiEirYeWIP2q4fJR6LuGpMhbSeX/wXr7u+5avyZvgyrMtneHHA/
+# m1LJBS5ogbqDTlGuOdxsb4SAIxt+ZRxADt+kSQLR1kNFl+rAqriNkFjJoYIOLDCC
+# DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
+# BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
+# AQcXAzAhMAkGBSsOAwIaBQAEFG7drJAyMqdSbmDP3Gd+uer5m9biAhUAi5Z+WGzh
+# k8tVuUVa54reVd6GI6IYDzIwMjQwMzE4MjEyNzEzWjADAgEeoIGGpIGDMIGAMQsw
+# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
+# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
+# QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
+# ewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMx
+# FzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVz
+# dCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZv
+# ciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJz
+# YWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBa
+# Fw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRl
+# YyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEo
+# MCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJ
+# KoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawy
+# jwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG
+# 50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45
+# ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU
+# 1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8j
+# wTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOC
+# AXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1Ud
+# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
+# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
+# cGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5j
+# b20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNh
+# bC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZ
+# MBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB
+# 8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZI
+# hvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZA
+# Ka3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxO
+# M+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2
+# xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv
+# 2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5
+# FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWv
+# uswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYD
+# VQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1
+# c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGlu
+# ZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQG
+# EwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5
+# bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBU
+# aW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAw
+# ggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQg
+# bTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMj
+# dUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR
+# 8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2
+# ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5S
+# MQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8E
+# AjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0
+# cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5
+# bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5z
+# eW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYB
+# BQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcw
+# AYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9o
+# dHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAo
+# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4E
+# FgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB
+# 8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZy
+# cGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5n
+# z3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9E
+# PEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6a
+# escixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GY
+# FHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJa
+# MIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
+# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
+# BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
+# BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
+# BDAcBgkqhkiG9w0BCQUxDxcNMjQwMzE4MjEyNzEzWjAvBgkqhkiG9w0BCQQxIgQg
+# Z683Hn71G+CObd+gX6aYoG0843BQLu6/OMlD29RmoZcwNwYLKoZIhvcNAQkQAi8x
+# KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
+# hvcNAQEBBIIBAFNhFr1kr+rLwy16pJt46+JRL+oF+7ZUvqx4x3dphgAEVtHTOyut
+# PJ4OBVnhdQoDFsxV6MCMxjzo1WwuxWC/x4itakzXuj4OW8caRb/fomx4/UYOFU57
+# 51lQasPjjdxvDYtDjW2xvjVWIImvUXasWwi6IKhxgLcRFBoyRy/8RYeoJZViwtyh
+# lR28XDMrd6ULzVd4lJTO9WfYSt05pOwK0iw3pdbAAN7GbiSoAdfYR8T2rCbvkHZM
+# /l9vo1GqbQmpK5KuwISEkx94gefx/OGoy97iCXOKMYYg7dKCsaF7G6HYmSqHWtfl
+# yVs6nj+NbBzkbBTlAM4S6jYGFVqPHYK4wLk=
 # SIG # End signature block
