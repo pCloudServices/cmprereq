@@ -51,13 +51,13 @@ param(
 	[Parameter(ParameterSetName='CPMConnectionTest',Mandatory=$false)]
 	[switch]$CPMConnectionTest,
     # Use this switch to skip online checks
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$SkipVersionCheck,
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$SkipIPCheck,
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$DisableNLA,
-    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [Parameter(ParameterSetName='Regular',Mandatory=$false)]
     [switch]$InstallRDS
 )
 
@@ -77,23 +77,24 @@ $arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix","remoteApp
 $arrCheckPrerequisitesGeneral = @(
 "VaultConnectivity", #General
 "CustomerPortalConnectivity", #General
+"CheckIdentityCustomURL",
 "OSVersion", #General
 "Processors", #General
 "Memory", #General
 "InterActiveLoginSmartCardIsDisabled", #General
 "UsersLoggedOn", #General
-#"KBs", #Obsolete
 "IPV6", #General
 "MachineNameCharLimit", #General
-#"NetworkAdapter", #General
+"MinimumDriveSpace", #General
 "DotNet", #General
 #"PSRemoting", #General
 #"WinRM", #General
 #"WinRMListener", #General
-#"NoPSCustomProfile", #General
 "PendingRestart", #General
 "CheckNoProxy",
-"GPO" #General + PSM
+"CheckEndpointProtectionServices", #General
+"GPO-Local", #General + PSM
+"GPO-Domain" #General + PSM
 )
 
 $arrCheckPrerequisitesSecureTunnel = @(
@@ -105,22 +106,22 @@ $arrCheckPrerequisitesSecureTunnel = @(
 
 
 $arrCheckPrerequisitesPSM = @(
-#"CheckNoRDS", #PSM
 "SQLServerPermissions", #PSM
 "SecondaryLogon", #PSM
 "KUsrInitDELL" #PSM
 )
 
 $arrCheckPrerequisitesCPM = @(
-"CRLConnectivity" #CPM
+#"CRLConnectivity" #CPM
 )
 
-# TBA next version
-$arrCheckIdentityPrerequisites = @(
-"IdentityIdaptiveApp", #Identity
-"IdentityTruste", #Identity
-"IdentityVerisign", #Identity
-"IdentityGlobalSign" #Identity
+
+$arrCheckConnectorManagementPrerequisites = @(
+"ConnectorManagementScripts", #CM
+"ConnectorManagementAssets", #CM
+"ConnectorManagementComponentRegistry", #CM
+"ConnectorManagementIOT" #CM
+"ConnectorManagementIOTCert" # CM
 )
 
 
@@ -133,7 +134,7 @@ If ($POC){
 	$arrCheckPrerequisitesGeneral += $arrCheckPrerequisitesPOC
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel}#,@{IdentityISPSS = $arrCheckIdentityPrerequisites}
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},<#@{CPM = $arrCheckPrerequisitesCPM},#>@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
 
 
 ## List of GPOs to check
@@ -161,7 +162,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "13"
+[int]$versionNumber = "28"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -180,6 +181,7 @@ $global:TriggerAtStart = New-ScheduledTaskTrigger -AtStartup
 $global:TriggerAtLogon = New-ScheduledTaskTrigger -AtLogon
 $global:ActionNLA = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-DisableNLA`""
 $global:ActionRDS = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -NoExit -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-InstallRDS`""
+$global:ActionRDSoutOfDomain = New-ScheduledTaskAction -Execute "Powershell.exe" -Argument "-NoProfile -NoExit -ExecutionPolicy Unrestricted -File `"$ScriptLocation\$g_ScriptName`" `"-skipIPCheck`" `"-skipVersionCheck`" `"-OutOfDomain`" `"-InstallRDS`""
 $global:taskNameNLA = "DisableNLAafterRDSInstall"
 $global:taskNameRDS = "CompleteRDSInstallAfterRestart"
 $global:taskDescrNLA = "DisableNLAafterRDSInstall"
@@ -191,6 +193,20 @@ $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
 $g_SKIP = "SKIP"
 
+# Supported AWS Regions
+$script:availableRegions = @(
+    [pscustomobject]@{RegionName = "US East" ; RegionCode = "us-east-1" ; Description = "Virginia"} # Virginia
+    [pscustomobject]@{RegionName = "Canada" ; RegionCode = "ca-central-1" ; Description = "Montreal"} # Montreal
+    [pscustomobject]@{RegionName = "Frankfurt" ; RegionCode = "eu-central-1" ; Description = "Frankfurt"} # Frankfurt
+    [pscustomobject]@{RegionName = "London" ; RegionCode = "eu-west-2" ; Description = "London"} # London
+    [pscustomobject]@{RegionName = "Eu South" ; RegionCode = "eu-south-1" ; Description = "Milan" } # Milan
+    [pscustomobject]@{RegionName = "AP Southeast" ; RegionCode = "ap-southeast-1" ; Description = "Singapore"} # Singapore
+    [pscustomobject]@{RegionName = "Sydney" ; RegionCode = "ap-southeast-2" ; Description = "Sydney"} # Sydney
+    [pscustomobject]@{RegionName = "Tokyo" ; RegionCode = "ap-northeast-1" ; Description = "Tokyo"} # Tokyo
+    [pscustomobject]@{RegionName = "Asia Pacific" ; RegionCode = "ap-south-1" ; Description = "Australia Sydney ,India Mumbai"} # Mumbai
+    [pscustomobject]@{RegionName = "ap-southeast-3" ; RegionCode = "ap-southeast-3" ; Description = "Indonesia Jakarta"} #Placeholder
+)
+
 
 #region Troubleshooting
 Function Show-Menu{
@@ -201,7 +217,7 @@ Function Show-Menu{
     Write-Host "2: Press '2' to Enable SecondaryLogon Service" -ForegroundColor Green
     Write-Host "3: Press '3' to Run CPM Install Connection Test" -ForegroundColor Green
     Write-Host "4: Press '4' to Retry Install RDS" -ForegroundColor Green
-    Write-Host "4: Press '5' to Verify InstallerUser status" -ForegroundColor Green
+    Write-Host "5: Press '5' to Verify InstallerUser status" -ForegroundColor Green
     Write-Host "Q: Press 'Q' to quit."
 }
 Function Troubleshooting{
@@ -238,9 +254,10 @@ Else{
     }
 }
 Function CPMConnectionTestFromTroubleshooting(){
-$CPMConnectionTest = $true
-CPMConnectionTest
+    $CPMConnectionTest = $true
+    CPMConnectionTest
 }
+
 
 Function TestIdentityServiceAccount(){
 	Write-LogMessage -type Info -MSG "Begin TestIdentityServiceAccount." -Early
@@ -267,13 +284,20 @@ Function TestIdentityServiceAccount(){
 		$portalSubDomainURL = $PlatformTenantId.Split(".")[0]
 	}
 	Try{
+
+		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		if($($creds.username) -match ' ' -or $($creds.GetNetworkCredential().Password) -match ' '){
+			Write-Host "Your Username/password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
+			Write-Host "Remove it and try again." -ForegroundColor Yellow
+			Pause
+            Exit
+		}
 	
 		#PlatformParams
 		$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
 		Write-LogMessage -type Info -MSG "Portal URL set: $BasePlatformURL" -Early
 		#Platform Identity API
-		$IdentityBaseURL = Invoke-WebRequest $BasePlatformURL -MaximumRedirection 0 -ErrorAction SilentlyContinue
-		$IdentityHeaderURL = ([System.Uri]$IdentityBaseURL.headers.Location).Host
+		$IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
 		
 		$IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
 		Write-LogMessage -type Info -MSG "Identity URL set: $IdaptiveBasePlatformURL" -Early
@@ -281,33 +305,41 @@ Function TestIdentityServiceAccount(){
 		$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
 		$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
 		$LogoffPlatform = "$IdaptiveBasePlatformSecURL/logout"
-		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
-		if($($creds.GetNetworkCredential().Password) -match ' '){
-			Write-Host "Your password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
-			Write-Host "Remove it and try again." -ForegroundColor Yellow
-			Pause
-			Exit
-		}
+
 
 		#Begin Start Authentication Process
-		Write-LogMessage -type Info -MSG "Begin Start Authentication Process" -Early
+		Write-LogMessage -type Info -MSG "Begin Start Authentication Process: $startPlatformAPIAuth" -Early
+        $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
 		$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = $creds.UserName ; Version = "1.0"} | ConvertTo-Json -Compress
-		$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 30
+		$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10
 		$IdaptiveResponse.Result.Challenges.mechanisms
 		
-		#Begin Advanced Authentication Process
-		Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process" -Early
-		$startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
-		$AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
-		$AnswerToResponse.Result
+        if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
+        {
+		    #Begin Advanced Authentication Process
+		    Write-LogMessage -type Info -MSG "Begin Advanced Authentication Process: $startPlatformAPIAdvancedAuth" -Early
+		    $startPlatformAPIAdvancedAuthBody = @{SessionId = $($IdaptiveResponse.Result.SessionId); MechanismId = $($IdaptiveResponse.Result.Challenges.mechanisms.MechanismId); Action = "Answer"; Answer = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+		    $AnswerToResponse = Invoke-RestMethod -Uri $startPlatformAPIAdvancedAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIAdvancedAuthBody -TimeoutSec 30
+		    $AnswerToResponse.Result
+        }
+        Else
+        {
+            Write-Host "Did not receive challenge response, check response recieved below:" -ForegroundColor Red
+            $IdaptiveResponse
+            # Tenant has Custom URL enabled, we don't support it yet.
+            if($IdaptiveResponse.Result.PodFqdn){
+                Write-LogMessage -type Warning -MSG "Hint: It looks like you have configured customized URL in Identity Administration, please disable it and try again (wait at least 10 min for changes to take affect)."
+                write-host "Hint: Navigate to Identity Administration -> Settings -> Customization -> Tenant URLs -> Delete the Custom URL and make sure default is '$($IdentityHeaderURL)'" -ForegroundColor Yellow
+            }
+        }
 	
 		if($AnswerToResponse.Result.Summary -eq "LoginSuccess"){
-			Write-Host "Success!" -ForegroundColor Green
+			Write-Host "Final Identity Result: Success!" -ForegroundColor Green
 			#LogOff
 			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
 			$logoff = Invoke-RestMethod -Uri $LogoffPlatform -Method Post -Headers $IdentityHeaders
 		}Else{
-			Write-Host "Failed!" -ForegroundColor Red
+			Write-Host "Final Identity Result: Failed!" -ForegroundColor Red
 				if($IdaptiveResponse.Result.Challenges.mechanisms.AnswerType.Count -gt 1){
 					Write-LogMessage -type Info -MSG "Challenge mechanisms greater than one:" -Early
 					$IdaptiveResponse.Result.Challenges.mechanisms.AnswerType
@@ -317,52 +349,47 @@ Function TestIdentityServiceAccount(){
 	
 	}catch
 	{
-		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+		Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri))"
+        Write-Host "Final Identity Result: Failed!" -ForegroundColor Red
 	}
 		#### Check against PVWA Directly, sometimes the shadowuser can be suspended/disabled in the vault but will be fine in identity. ####
 
 			Write-LogMessage -type Info -MSG "Also testing directly against Privilege Cloud API." -Early
 			Start-Sleep 3
-			$basePVWA = "https://$portalSubDomainURL.privilegecloud.cyberark.cloud"
-			$pvwaLogoff = "$BasePlatformURL/api/passwordvault/Auth/logoff"
-			# Login URL is still Identity base platform on purpose.
-			$basePVWALoginCyberArk = "$BasePlatformURL/api/passwordvault/Auth/CyberArk/Logon"
+           $basePVWA = "https://$portalSubDomainURL.privilegecloud.cyberark.cloud"
+			$pvwaLogoff = "$basePVWA/passwordvault/api/Auth/logoff"
+			$basePVWALoginCyberArk = "$basePVWA/passwordvault/api/Auth/CyberArk/Logon"
 			$pvwaLogonBody = @{ username = $creds.UserName; password = $creds.GetNetworkCredential().Password } | ConvertTo-Json -Compress
+            $pvwaLogonToken = $null
 		# Login to PVWA
 		Try{
 			Write-LogMessage -type Info -MSG "Begin Login: $basePVWALoginCyberArk" -Early
 			$pvwaLogonToken = Invoke-RestMethod -Method Post -Uri $basePVWALoginCyberArk -Body $pvwaLogonBody -ContentType "application/json" -TimeoutSec 2700 -ErrorVariable pvwaResp
-			$pvwaLogonHeader = @{Authorization = $pvwaLogonToken }
-		
-			# Get current logged on user details:
-
-			$getCurrentUser = Invoke-RestMethod -Uri "$basePVWA/passwordvault/WebServices/PIMServices.svc/User" -Method Get -Headers $pvwaLogonHeader -ContentType "application/json"
-			Write-LogMessage -type Info -MSG "Getting current user details: `"$basePVWA/passwordvault/WebServices/PIMServices.svc/User`"" -Early
-			if(($getCurrentUser.Disabled -eq "True") -or ($getCurrentUser.Suspended -eq "True")){
-				Write-Host "Failed!" -ForegroundColor Red
-				Write-Host "User is Suspended/Disabled in the Vault!" -ForegroundColor Yellow
-				Write-Host "Hint: Perform `"Set Password`" and `"MFA Unlock`" from Identity Portal and try again." -ForegroundColor Yellow
-			}
-			else
+            if($pvwaLogonToken){
+                Write-Host "Final Privilege Cloud Result: Success!" -ForegroundColor Green
+            }
+            else
 			{
-				$getCurrentUser
-				Write-Host "Success!" -ForegroundColor Green
+				Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
+                $pvwaResp
 			}
-
-			#logoff
-			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
-			$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader
 		}Catch
 		{
-			Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $($_.ErrorDetails.Message))"
+            Write-LogMessage -Type Error -Msg "Error: $(Collect-ExceptionMessage $_.exception.message $($_.ErrorDetails.Message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)) $pvwaResp"
+            Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
 			#Lets check if identity was ok, then if vault is not, we know the pw is correct but user is most likely suspended/disabled.
 			if(($AnswerToResponse.Result.Summary -eq "LoginSuccess") -and ($pvwaResp -like "*Authentication failure*")){
-				Write-Host "Failed!" -ForegroundColor Red
+				Write-Host "Final Privilege Cloud Result: Failed!" -ForegroundColor Red
 				Write-Host "Hint: User is most likely Suspended/Disabled in the Vault" -ForegroundColor Yellow
 				Write-Host "Hint: Perform `"Set Password`" and `"MFA Unlock`" from Identity Portal and try again." -ForegroundColor Yellow
 			}
 		}
-	$creds = $null
+        Finally{
+            #logoff
+			Write-LogMessage -type Info -MSG "Begin Logoff Process" -Early
+			Try{$logoff = Invoke-RestMethod -Uri $pvwaLogoff -Method Post -Headers $pvwaLogonHeader}Catch{}
+            $creds = $null
+        }
 	Write-LogMessage -type Info -MSG "Finish TestIdentityServiceAccount." -Early
 	}
 
@@ -510,7 +537,7 @@ Function PrimaryDNSSuffix
         else
         {
             $result = $False
-            $errorMsg = "The logged in user domain: '$($env:userdnsdomain)' doesn't match the machine domain: '$PrimaryDNSSuffix'. Please see KB '000020063' on the customer support portal."
+            $errorMsg = "The logged in user domain: '$($env:userdnsdomain)' doesn't match the machine domain: '$PrimaryDNSSuffix'. Please see KB '000020063' on the customer support portal. (If this machine is not domain joined you need to run the script with -OutOfDomain Flag)."
         }
 		Write-LogMessage -Type Verbose -Msg "Finished PrimaryDNSSuffix"
 		
@@ -589,22 +616,17 @@ Function OSVersion
 	param ()
 	try{
 		Write-LogMessage -Type Verbose -Msg "Starting OSVersion..."
-		$actual = (Get-WmiObject Win32_OperatingSystem).caption
+		$actual = (Get-CimInstance Win32_OperatingSystem).caption
 		$errorMsg = ""
 		$result = $false
 		
-		If($actual -Like '*2016*' -or $actual -like '*2019*')
+		If($actual -Like '*2016*' -or $actual -like '*2019*' -or $actual -like '*2022*')
 		{
 			$result = $true
 		}
 		elseif($actual -Like '*2012 R2*')
 		{
-			$errorMsg = "Privileged Cloud installation must be run on Windows Server 2016/2019."   
-			$result = $false
-		}
-		elseif($actual -like '*2022*')
-		{
-			$errorMsg = "Detected OS 2022, only CPM can be installed on it. PSM is not yet supported."
+			$errorMsg = "Privileged Cloud installation must be run on Windows Server 2019+."   
 			$result = $false
 		}
 		else
@@ -682,7 +704,7 @@ Function IPV6
 		$result = $false
 		$errorMsg = ""
 	
-		$arrInterfaces = (Get-WmiObject -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
+		$arrInterfaces = (Get-CimInstance -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
 		$IPv6Status = ($arrInterfaces | Where-Object { $_.contains("::") }).Count -gt 0
 
 		if($IPv6Status)
@@ -1183,7 +1205,7 @@ Function ServerInDomain
 		Write-LogMessage -Type Verbose -Msg "Starting ServerInDomain..."
 		$result = $false
     
-		if ((Get-WmiObject win32_computersystem).partofdomain) 
+		if ((Get-CimInstance win32_computersystem).partofdomain)
 		{
 			  $actual = "In Domain"
 			  $result = $true
@@ -1283,7 +1305,7 @@ Function PendingRestart
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
 		# SCCM always returns a value back, so we check it's not true instead.
-		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
+		$wmiClientUtilities = (Invoke-CimMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
 		$chkComponentBasedServicing = ($null -ne $regComponentBasedServicing)
 		$chkWindowsUpdate =	($null -ne $regWindowsUpdate)
@@ -1329,14 +1351,14 @@ Function PendingRestartRDS
 		$regComponentBasedServicing = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | Where-Object { $_.Name -match "RebootPending" })
 		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -match "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
-		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
+		# SCCM always returns a value back, so we check it's not true instead.
+		$wmiClientUtilities = (Invoke-CimMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
 		$chkComponentBasedServicing = ($null -ne $regComponentBasedServicing)
 		$chkWindowsUpdate =	($null -ne $regWindowsUpdate)
 		$chkSessionManager = ($null -ne $regSessionManager)
-		$chkClientUtilities = ($null -ne $wmiClientUtilities)
 		
-		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or $chkClientUtilities)
+		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or ($wmiClientUtilities -eq $true))
 		{
 			Write-LogMessage -Type Warning -Msg "Pending restart detected, restart and run the script again."
 			Pause
@@ -1395,21 +1417,67 @@ Function UsersLoggedOn
         errorMsg = $errorMsg;
         result = $result;
     }
-}	
+}
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: GPO
-# Description....: Check the GPOs on the machine
+# Name...........: MinimumDriveSpace
+# Description....: Check if machine has enough storage space to support deployments.
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function GPO
+Function MinimumDriveSpace
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting MinimumDriveSpace..."
+		[int]$minimumSpace = 10 # 10GB minimum space required.
+
+		$expected = $minimumSpace;
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+
+		# Get drive C and convert to GB.
+		$drivespaceC = Get-PSDrive C
+		[int]$actual = [math]::Round($drivespaceC.Free / 1GB)
+		
+		if ($actual -le $minimumSpace)
+		{
+			$actual = $actual
+			$result = $false
+			$errorMsg = "Current free space on Drive C: '$($actual)' GB. We need at least '$($minimumSpace)' GB to guarantee successful download and unpacking of the files."
+		}
+		else {
+			$result = $true
+		}
+	
+		Write-LogMessage -Type Verbose -Msg "Finished MinimumDriveSpace"
+	} catch {
+		$errorMsg = "Could not check MinimumDriveSpace. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: GPO-Local
+# Description....: Check the GPOs on the machine, this check is needed to install RDS otherwise windows blocks it.
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function GPO-Local
 {
 	[OutputType([PsCustomObject])]
 	param ()
 	[int]$script:gpoRDSerrorsfound = 0
 	try{
-		Write-LogMessage -Type Verbose -Msg "Starting GPO..."
+		Write-LogMessage -Type Verbose -Msg "Starting GPO-Local..."
 		$actual = ""	
 		$errorMsg = ""
 		$result = $false
@@ -1420,50 +1488,67 @@ Function GPO
 		gpresult /f /x $path *> $null
 
 		[xml]$xml = Get-Content $path
-		$RDSGPOs = $xml.Rsop.ComputerResults.ExtensionData.extension.policy | Where-Object { ($_.Category -match "Windows Components") }
+        
+        $computerResults = $xml.Rsop.ComputerResults
+        $extensionData = $computerResults.ExtensionData
+        $extension = $extensionData.Extension
+        $allPolicyNodes = $extension.Policy
+
+        $RDSGPOs = $allPolicyNodes | Where-Object { $_.Category -match "Windows Components" }
+
 		if($RDSGPOs.Category.Count -gt 0)
 		{
-			[int]$script:gpoRDSerrorsfound = 1
 			ForEach($item in $RDSGPOs)
 			{
-				$skip = $false
-				$name = "GPO: $($item.Name)"
-				$errorMsg = ""	
-				# Check if GPO exists in the critical GPO items
-				If($arrGPO -match $item.name)
-				{
-					$expected = $($arrGPO -match $item.name).Expected
-					$gpoResult = ($Expected -eq $($item.state))
-					if(-not $gpoResult )
-					{
-						$compatible = $false
-						$errorMsg = "Expected:"+$Expected+" Actual:"+$($item.state)
-					}
-				}
-				# Check if GPO exists in RDS area
-				elseif($item.Category -match "Remote Desktop Services")
-				{
-					$expected = 'Not Configured'
-					$compatible = $false
-					$errorMsg = "Expected:'Not Configured' Actual:"+$($item.state)
-				}
-				else {
-					$skip = $true
-				}
-				if(!$skip)
-				{
-					Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $Expected, $item.state)
-					$reportObj = @{expected = $expected; actual = $($item.state); errorMsg = $errorMsg; result = $gpoResult;}
-					AddLineToTable $name $reportObj
-				}
-			}		
+                
+                # Determine source GPO (Domain or Local)
+                $gpoDomain = $item.GPO.Domain.'#text'
+                $GPOlocation = if ($gpoDomain) { "$gpoDomain Domain" } else { "Local" }
+
+                If($GPOlocation -eq "Local"){                   
+				    $skip = $false
+				    $name = "GPO-Local: $($item.Name)"
+				    $errorMsg = ""	
+				    # Check if GPO exists in the critical GPO items
+				    If($arrGPO -match $item.name)
+				    {
+				    	[int]$script:gpoRDSerrorsfound = 1
+				    	$expected = $($arrGPO -match $item.name).Expected
+				    	$gpoResult = ($Expected -eq $($item.state))
+				    	if(-not $gpoResult )
+				    	{
+				    		$compatible = $false
+				    		$errorMsg = "Source GPO: $GPOlocation Expected:"+$Expected+" Actual:"+$($item.state)
+				    	}
+				    }
+				    # Check if GPO exists in RDS area
+				    elseif($item.Category -match "Remote Desktop Services")
+				    {
+				    	[int]$script:gpoRDSerrorsfound = 1
+				    	$expected = 'Not Configured'
+				    	$compatible = $false
+				    	$errorMsg = "Source GPO: $GPOlocation Expected:'Not Configured' Actual:"+$($item.state)
+				    }
+				    else {
+				    	$skip = $true
+				    }
+				    if(!$skip)
+				    {
+                        # If not skip, add the findings to a table.
+				    	Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $Expected, $item.state)
+				    	$reportObj = @{expected = $expected; actual = $($item.state); errorMsg = $errorMsg; result = $gpoResult;}
+				    	AddLineToTable $name $reportObj
+				    }
+                }
+			}
 		}
 
 		$errorMsg = $g_SKIP
 		if(!$compatible)
 		{
-			 $actual = "Not Compatible"
+			 $actual = "RDS will fail"
 			 $result = $false
+             $errorMsg = "Must remove any local RDS related GPOs before we can deploy the RDS role."
 		}
 		else
 		{
@@ -1474,7 +1559,101 @@ Function GPO
 	}
 
 	return [PsCustomObject]@{
-		expected = "PSM Compatible";
+		expected = "RDS will succeed";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: GPO-Domain
+# Description....: Check the GPOs on the machine, this check differs as it only looks for problematic GPOs for PSM functionality.
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function GPO-Domain
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	[int]$script:gpoRDSerrorsfound = 0
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting GPO-Domain..."
+		$actual = ""	
+		$errorMsg = ""
+		$result = $false
+		$gpoResult = $false
+		$compatible = $true
+
+		$path = "C:\Windows\temp\GPOReport.xml"
+		#gpresult /f /x $path *> $null # we already run this previously with the local gpo.
+
+		[xml]$xml = Get-Content $path
+        
+        $computerResults = $xml.Rsop.ComputerResults
+        $extensionData = $computerResults.ExtensionData
+        $extension = $extensionData.Extension
+        $allPolicyNodes = $extension.Policy
+
+        $RDSGPOs = $allPolicyNodes | Where-Object { $_.Category -match "Windows Components" }
+
+		if($RDSGPOs.Category.Count -gt 0)
+		{
+			ForEach($item in $RDSGPOs)
+			{
+                
+                # Determine source GPO (Domain or Local)
+                $gpoDomain = $item.GPO.Domain.'#text'
+                $GPOlocation = if ($gpoDomain) { "$gpoDomain Domain" } else { "Local" }
+
+                #domain
+                If($gpoDomain){
+				    $skip = $false
+				    $name = "GPO-Domain: $($item.Name)"
+				    $errorMsg = ""	
+				    # Check if GPO exists in the critical GPO items
+				    If($arrGPO -match $item.name)
+				    {
+				    	[int]$script:gpoRDSerrorsfound = 1
+				    	$expected = $($arrGPO -match $item.name).Expected
+				    	$gpoResult = ($Expected -eq $($item.state))
+				    	if(-not $gpoResult )
+				    	{
+				    		$compatible = $false
+				    		$errorMsg = "Source GPO: $GPOlocation Expected:"+$Expected+" Actual:"+$($item.state)
+				    	}
+				    }
+				    else {
+				    	$skip = $true
+				    }
+				    if(!$skip)
+				    {
+                        # If not skip, add the findings to a table.
+				    	Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $Expected, $item.state)
+				    	$reportObj = @{expected = $expected; actual = $($item.state); errorMsg = $errorMsg; result = $gpoResult;}
+				    	AddLineToTable $name $reportObj
+				    }
+                }
+			}		
+		}
+
+		$errorMsg = $g_SKIP
+		if(!$compatible)
+		{
+			 $actual = "Domain GPOs found"
+			 $result = $false
+             $errorMsg = "Must remove problematic domain GPOs for PSM sessions to succeed."
+		}
+		else
+		{
+		   $result = $true
+		}
+	} catch {
+		$errorMsg = "Could not check GPO settings on machine. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+
+	return [PsCustomObject]@{
+		expected = "Domain GPOs empty";
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
@@ -1534,47 +1713,56 @@ Function ConsoleHTTPConnectivity
 {
 	[OutputType([PsCustomObject])]
 	param ()
-	try{
 		Write-LogMessage -Type Verbose -Msg "Starting ConsoleHTTPConnectivity..."
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
 		
 		$CustomerGenericGET = 0
-		Try{
-			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=$CustomerId&configItem=environmentFQDN"
-			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
-			If($null -ne $CustomerGenericGET.config)
-			{
-				$actual = "200"
-				$result = $true
-			}
-		} catch {
-			if ($_.Exception.Message -eq "Unable to connect to the remote server")
-			{
-				$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL'"
-				$result = $false
-			}
-			elseif ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
-			{
-				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL'"
-				$result = $false
-			}
-            elseif ($_.Exception.Response.StatusCode.value__ -eq 404)
-			{
-				$actual = $true
-				$result = $true
-			}
-			else
-			{
-				Throw $_
-			}
-		}		
+
+        $portalSubDomainURL = $portalURL.Split(".")[0]
+
+        If(![string]::IsNullOrEmpty($portalSubDomainURL)){
+		    Try{
+		    	$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?subDomain=$portalSubDomainURL&configItem=environmentFQDN"
+		    	$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
+		    	If($null -ne $CustomerGenericGET.config)
+		    	{
+		    		$actual = "200"
+		    		$result = $true
+		    	}
+		    } catch {
+		    	if ($_.Exception.Message -eq "Unable to connect to the remote server")
+		    	{
+		    		$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL' Try it from your browser."
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+		    	elseif ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
+		    	{
+		    		$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL' Try it from your browser." 
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+                elseif ($_.Exception.Response.StatusCode.value__ -eq 400)
+		    	{
+		    		$errorMsg = "Unable to GET to '$connectorConfigURL' Something is wrong with the syntax we are sending.."
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+		    	else
+		    	{
+		    		$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
+		    		$result = $false
+		    		$actual = $_.Exception.Response.StatusCode.value__
+		    	}
+		    }
+        }
+        Else{
+		    $errorMsg = "Skipping this test since host is empty"
+        }	
 		
 		Write-LogMessage -Type Verbose -Msg "Finished ConsoleHTTPConnectivity"
-	} catch {
-		$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
 		
 	return [PsCustomObject]@{
 		expected = "200";
@@ -1818,7 +2006,7 @@ Function Memory
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: SQLServerPermissions
-# Description....: Required SQL Server permissions
+# Description....: Required SQL Server permissions for successful RDS install on OS 2016, not relevant from 2019+.
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1826,12 +2014,16 @@ Function SQLServerPermissions
 {
 	[OutputType([PsCustomObject])]
 	param ()
-	try{
 		Write-LogMessage -Type Verbose -Msg "Starting SQLServerPermissions..."
 		$actual = ""
 		$result = $False
 		$errorMsg = ""
 
+        $OS = (Get-CimInstance Win32_OperatingSystem).caption
+
+    # Check if we are on 2016, other OS don't need this check.
+  if($OS -Like '*2016*'){
+    Try{
 		$SecPolGPO = @{
 			"SeDebugPrivilege" = "Debug Programs";
 			"SeBackupPrivilege" = "Back up files and directories";
@@ -1882,6 +2074,10 @@ Function SQLServerPermissions
 	} catch {
 		$errorMsg = "Could not check SQL Server permissions. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
+  }Else{
+    $actual = $True
+    $result = $True
+  }
 		
 	return [PsCustomObject]@{
 		expected = $True;
@@ -2019,7 +2215,7 @@ Function Test-NetConnectivity
 		[string]$ComputerName,
 		[int]$Port
 	)
-	$errorMsg = ""
+	$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
 	$result = $False
 	If(![string]::IsNullOrEmpty($ComputerName)) # -and ![string]::IsNullOrEmpty($portalSubDomainURL))
 	{
@@ -2034,8 +2230,9 @@ Function Test-NetConnectivity
 				}
 				Else { 
                      $result = $True
-                     # if port 1858, indicating vault test, declate param so we can use it in CPMConnectionTest.
+                     # if port 1858, indicating vault test, declare param so we can use it in CPMConnectionTest.
                      if($port -eq 1858){$script:VaultConnectivityOK = $True}
+                     $errorMsg = ""
                      }
 			}
 			Else
@@ -2051,6 +2248,7 @@ Function Test-NetConnectivity
 					{
 						$tcpClient.Close()
 						$result = $True
+                        $errorMsg = ""
 					}
 					else
 					{
@@ -2116,7 +2314,7 @@ Function GetPublicIP()
 	try{
 		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP..." -Early
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
-		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
+		$PublicIP | Out-File "_$($env:COMPUTERNAME) PublicIP.txt"
 		Write-LogMessage -Type Success -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
 		return $PublicIP
 	}
@@ -2170,6 +2368,594 @@ Function MachineNameCharLimit()
 }
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: CheckIdentityCustomURL
+# Description....: Checks with a dummy account if identity vanity url is enabled. (Expected false, since not supported in privcloud yet).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function CheckIdentityCustomURL{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    Write-LogMessage -Type Verbose -Msg "Starting CheckIdentityCustomURL..."
+
+    $expected = $true
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+
+    $portalSubDomainURL = $portalURL.Split(".")[0]
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($portalSubDomainURL)){
+        Try{
+        	# PlatformParams
+	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
+	    	# Platform Identity API
+	    	$IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+	    	
+	    	
+	    	$IdaptiveBasePlatformURL = "https://$IdentityHeaderURL"
+	    	$IdaptiveBasePlatformSecURL = "$IdaptiveBasePlatformURL/Security"
+	    	$startPlatformAPIAuth = "$IdaptiveBasePlatformSecURL/StartAuthentication"
+	    	$startPlatformAPIAdvancedAuth = "$IdaptiveBasePlatformSecURL/AdvanceAuthentication"
+
+	    	# Begin Start Authentication Process
+            $IdentityTenantId = $IdentityHeaderURL.Split(".")[0]
+	    	$startPlatformAPIBody = @{TenantId = $IdentityTenantId; User = "TestDummyPrereqScript" ; Version = "1.0"} | ConvertTo-Json -Compress
+	    	$IdaptiveResponse = Invoke-RestMethod -Uri $startPlatformAPIAuth -Method Post -ContentType "application/json" -Body $startPlatformAPIBody -TimeoutSec 10 -ErrorVariable identityErr
+	    	
+            if(-not($IdaptiveResponse.Result.Challenges.mechanisms -eq $null))
+            {
+                $actual = $true
+                $result = $true
+
+            }
+            Else
+            {
+                # Tenant has Custom URL enabled, we don't support it yet.
+                if($IdaptiveResponse.Result.PodFqdn){
+                    $actual = $false
+                    $result = $false
+                    $errorMsg = "It looks like you have configured customized URL in Identity Administration, please disable it and try again (more info here: https://docs.cyberark.com/Product-Doc/OnlineHelp/Idaptive/Latest/en/Content/GetStarted/CustomDomain.htm)."
+                }
+                Else
+                {
+                    # catch all other errors, just display whatever we see in result.
+                    $actual = $IdaptiveResponse.Result
+                }                
+            }
+        Write-LogMessage -Type Verbose -Msg "Finished CheckIdentityCustomURL..."
+        }
+        Catch
+        {
+            $errorMsg = $identityErr.message + $_.exception.status + $_.exception.Response.ResponseUri.AbsoluteUri
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty"
+		$errorMsg = "Host name empty"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementScripts
+# Description....: Check connectivity to CM(+AWS S3 bucket, IOT).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function ConnectorManagementScripts{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementScripts..."
+
+
+    $portalSubDomainURL = $portalURL.Split(".")[0]
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($portalSubDomainURL)){
+        Try{
+        	# PlatformParams
+	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark1.cloud"
+	    	# Platform Identity API
+	    	$IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+
+            Write-Host "1"
+            Write-Host $IdentityHeaderURL
+
+	    	
+            # Find Identity Region
+            $GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
+
+            # Select region Name, so we can match it vs exception regions below
+            $searchRegion = $GetTenantDetails.Result.Region
+
+            # Special exception for CM regions operated elsewhere.
+            if($searchRegion -eq "Eu South"){
+                $searchRegion = "Frankfurt"
+            }
+            # Special exception for CM regions operated elsewhere.
+            if($searchRegion -eq "ap-southeast-3"){ # Jakarta
+                $searchRegion = "AP Southeast" # Singapore
+            }
+
+            # Special exception for Australia and India since Identity uses same region name for them, we can distinguish by pod
+            if($searchRegion -eq "Asia Pacific"){
+                if($GetTenantDetails.Result.Name -like "pod1302*" -or $GetTenantDetails.Result.Name -like "pod1306*")
+                {
+                    $searchRegion = "Sydney"
+                }
+                Else{
+                    $searchRegion = "Asia Pacific"
+                }
+                   
+            }
+
+            # Match region from list and get region code.
+            $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion} | select -ExpandProperty regionCode
+
+            if([string]::IsNullOrEmpty($region)){
+                Write-LogMessage -Warning -msg "Couldn't retrieve region from https://$($IdentityHeaderURL)/sysinfo/version try browsing to it and input it manually"
+                start-sleep 5
+                Write-Host "Press ENTER to select region"
+                Pause
+                $searchRegion = $availableRegions | Out-GridView -PassThru
+                $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion.RegionName} | select -ExpandProperty regionCode
+            }
+
+        $CMUrls = @(
+            "https://connector-management-scripts-490081306957-$($region).s3.amazonaws.com"
+            #"https://connector-management-assets-490081306957-$($region).s3.amazonaws.com",
+            #"https://component-registry-store-490081306957.s3.amazonaws.com/"
+        )
+	    	
+                # Start Connectivity test
+                foreach($url in $CMUrls){
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
+                    }
+                    Else{
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+
+            }
+     
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementScripts..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
+
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty"
+		$errorMsg = "Host name empty"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementAssets
+# Description....: Check connectivity to CM(+AWS S3 bucket, IOT).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function ConnectorManagementAssets{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementAssets..."
+
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        Try{
+            $CMUrls = @(
+            "https://connector-management-assets-490081306957-$($region).s3.amazonaws.com"
+            )
+	    	
+            # Start Connectivity test
+            foreach($url in $CMUrls){
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
+                    }
+                    Else{
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+            }
+     
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementAssets..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
+
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementComponentRegistry
+# Description....: Check connectivity to CM(+AWS S3 bucket, IOT).
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function ConnectorManagementComponentRegistry{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementComponentRegistry..."
+
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        Try{
+            $CMUrls = @(
+            "https://component-registry-store-490081306957.s3.amazonaws.com"
+            )
+	    	
+            # Start Connectivity test
+            foreach($url in $CMUrls){
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
+                    }
+                    Else{
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+            }
+     
+        Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementComponentRegistry..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementIOT
+# Description....: Vault network connectivity on port 1858
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function ConnectorManagementIOT
+{
+	[OutputType([PsCustomObject])]
+	param ()
+    
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        $AwsIOTAddress = "a3vvqcp8z371p3-ats.iot.$($region).amazonaws.com"
+	    Write-LogMessage -Type Verbose -Msg "Runing ConnectorManagementIOT"
+	    return Test-NetConnectivity -ComputerName $AwsIOTAddress -Port 443
+    }
+	Else
+	{
+        # In case $region is empty, we override the entire test and return our own customObject result.
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+        $result = $false
+        return [PsCustomObject]@{
+		expected = $true;
+		actual = $false;
+		errorMsg = $errorMsg;
+		result = $result;
+	    }
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConnectorManagementIOTCert
+# Description....: Check the certificate endpoint is not tampered by proxy/SSL inspect.
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+function ConnectorManagementIOTCert {
+    [OutputType([PsCustomObject])]
+    param ()
+    
+    $expected = "CN=Amazon RSA 2048 M01, O=Amazon, C=US"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+
+    Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementIOTCert..."
+    
+    function Get-SSLCertificateDetails {
+        param (
+            [Parameter(Mandatory=$true)]
+            [string]$Url
+        )
+        
+        $tcp = $null
+        $sslStream = $null
+        
+        try {
+            $uri = [System.Uri]::new($Url)
+            $tcp = New-Object System.Net.Sockets.TcpClient
+            try {
+                $tcp.Connect($uri.Host, $uri.Port)
+            } catch {
+                $originalErrorMsg = "Could not connect to $($uri.Host):$($uri.Port) Error: $($_.Exception.Message)"
+                Throw $originalErrorMsg
+            }
+            
+            $stream = $tcp.GetStream()
+            $sslStream = New-Object System.Net.Security.SslStream -ArgumentList $stream
+            try {
+                $sslStream.AuthenticateAsClient($uri.Host)
+            } catch {
+                $originalErrorMsg = "Failed to authenticate as client to $($uri.Host) Error: $($_.Exception.Message)"
+                Throw $originalErrorMsg
+            }
+            
+            $certificate = $sslStream.RemoteCertificate
+            if ($null -eq $certificate) { throw "Failed to get the remote certificate from the SslStream" }
+            
+            return $certificate
+        } catch {
+            $script:errMsg = "Error occurred while fetching CERT: $originalErrorMsg"
+            throw $errMsg
+        } finally {
+            $sslStream.Close()
+            $tcp.Close()
+        }
+    }
+    
+    if (![string]::IsNullOrEmpty($Region)) {
+        try {
+            $CertURL = "https://a3vvqcp8z371p3-ats.iot.$($Region).amazonaws.com:443"
+            $cert = Get-SSLCertificateDetails -Url $CertURL
+            $actual = $cert.Issuer
+            
+            if ($actual -ne $expected) {
+                $errorMsg = "The expected certificate ('$($expected)') doesn't match the actual certificate received ('$($actual)'). Test it by browsing to this URL: '$($CertURL)'."
+            } else {
+                $result = $true
+            }
+
+            Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementIOTCert..."
+        } catch {
+            $errorMsg = "$(Collect-ExceptionMessage) $($errMsg)"
+        }
+    } else {
+        $errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+    }
+    
+    return [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CheckEndpointProtectionServices
+# Description....: Check if machine has AV/ATP agents running
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+function CheckEndpointProtectionServices(){
+    $expected = ""
+    $errorMsg = ""
+    $actual = ""
+    $result = $false
+
+    Write-LogMessage -Type Verbose -Msg "Starting CheckEndpointProtectionServices..."
+
+    $endpointProtectionServices = @(
+     "*AVGNT*",
+     "*Avast*",
+     "*Avira*",
+     "*Bitdefender*",
+     "*Carbon Black*",
+     "*Check Point*",
+     "*Cisco*",
+     "*Comodo*",
+     "*Cortex*",
+     "*CrowdStrike*",
+     "*CylancePROTECT*",
+     "*ESET Endpoint*",
+     "*FireEye*",
+     "*Guardicore*",
+     "*Fortinet*",
+     "*Kaspersky*",
+     "*Malwarebytes*",
+     "*McAfee*",
+     "*Microsoft Defender*",
+     "*Palo Alto*",
+     "*Panda*",
+     "*Qualys*",
+     "*SentinelOne*",
+     "*Sophos*",
+     "*Symantec*",
+     "*Trend Micro*",
+     "*Webroot*"
+    )
+    
+    Try
+    {
+        $allservices = Get-WmiObject win32_service | select * -ErrorAction SilentlyContinue
+        foreach ($service in $endpointProtectionServices)
+        {
+            $serviceStatus = $allservices | where {$_.description -like $service}
+            if ($serviceStatus)
+            {
+                if ($serviceStatus.state -eq "Running")
+                {
+                    $errorMsg = "Detected AV/ATP Service '$($serviceStatus.DisplayName)': Running. Note that we advise to turn off any AV/ATP agents for the duration of installation/upgrades, various AV/ATP agents are known to prevent execution, delete files, prevent NTFS permissions changes or block commands. Post operation we strongly advise to have these services BACK on and running. In some rare use cases, it's not enough to simply stop the service, it will keep failing the installation until the AV agent is completely uninstalled, take that into consideration, each AV acts differently. `nhttps://docs.cyberark.com/privilege-cloud-shared-services/Latest/en/Content/Privilege%20Cloud/PrivCloud-install-antivirus.htm"
+                    $result = $false
+                    $actual = $serviceStatus
+                }
+                # service was found but stopped.
+                Elseif($serviceStatus.state -eq "Stopped")
+                {
+                    
+                    $result = $true 
+                }
+            }
+            # No service found from the list
+            else
+            {
+                $result = $true 
+            }
+        }
+
+        Write-LogMessage -Type Verbose -Msg "Finished CheckEndpointProtectionServices..."  
+    }
+    Catch{
+        $errorMsg = "Could not check CheckEndpointProtectionServices. Error: $(Collect-ExceptionMessage $_.Exception)"
+    }
+
+        return [PsCustomObject]@{
+            expected = $expected;
+            actual = $actual;
+            errorMsg = $errorMsg;
+            result = $result;
+        }
+}
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: CheckNoProxy
 # Description....: Checks proxy configuration, required direct access for RDS deployment
 # Parameters.....: None
@@ -2215,6 +3001,27 @@ Function CheckNoProxy()
 }
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: CheckNoProxyRDS
+# Description....: Checks proxy configuration, requires direct access for RDS deployment
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+Function CheckNoProxyRDS()
+{
+	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
+	if(-not($(netsh winhttp show proxy)) -match "Direct access")
+	{
+		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script (you can re-enable after RDS is complete). Run `"netsh winhttp show proxy`" to see current config, to disable run `"netsh winhttp reset proxy`""
+		Pause
+		Exit
+	}
+	Else
+	{
+		Write-LogMessage -Type info	-Msg "No proxy configured." -early
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: remoteAppDomainUserPermissions
 # Description....: Checks that executing user is in "Domain Users" group in AD and in local "administrators" group in PSM machine.
 # Parameters.....: None
@@ -2231,6 +3038,7 @@ Function remoteAppDomainUserPermissions()
 		$errorMsg = ""
         $expected = $true
 
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
 		$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
 		$WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
 
@@ -2240,7 +3048,7 @@ Function remoteAppDomainUserPermissions()
 			# NOT domain user with administrative rights
 			$actual = $false
 			$result = $False
-			$errorMsg = "Installing user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect)."
+			$errorMsg = "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect). If the user is from a different domain, this error will not go away, but as a workaround, after PSM is installed, perform the actions described here: https://cyberark.my.site.com/s/article/Publish-PSMInitSession-as-a-RemoteApp-Program"
 			$expected = $true
 		}
 		Else{
@@ -2264,18 +3072,23 @@ Function remoteAppDomainUserPermissions()
 	}
 }
 
-Function CheckNoProxyRDS()
+Function remoteAppDomainUserPermissionsRDS()
 {
-	Write-LogMessage -Type info	-Msg "Checking if machine has proxy configuration..." -early
-	if(-not($(netsh winhttp show proxy)) -match "Direct access")
-	{
-		Write-LogMessage -Type Warning -Msg "Proxy configuration detected, please disable and rerun script. Run `"netsh winhttp show proxy`" to disable run `"netsh winhttp reset proxy`""
-		Pause
-		Exit
-	}
-	Else
-	{
-		Write-LogMessage -Type info	-Msg "No proxy configured." -early
+	# if script was ran with outofdomain flag we need to skip this test.
+	if(-not ($OutOfDomain)){
+		Write-LogMessage -Type Info -Msg "Checking current windows user has permissions to configure remoteApp..." -Early
+        Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+		$CurrentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+		$WindowsPrincipal = New-Object System.Security.Principal.WindowsPrincipal($CurrentUser)
+
+		if(($WindowsPrincipal.IsInRole("Domain Users") -eq $False) -or 
+    	($WindowsPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator") -eq $False))
+		{
+			# NOT domain user with administrative rights
+			Write-LogMessage -type Error -MSG "Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect). If the user is from a different domain, this error will not go away, but as a workaround, after PSM is installed, perform the actions described here: https://cyberark.my.site.com/s/article/Publish-PSMInitSession-as-a-RemoteApp-Program"
+            Write-LogMessage -type Warning -MSG "We will proceed with install, but remember to fix this issue after PSM component is successfully installed if you want to enjoy RemoteApp features."
+			Pause
+		}
 	}
 }
 
@@ -2520,6 +3333,9 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 	
 	# Check machine has no proxy configuration
 	CheckNoProxyRDS
+
+	# Check user is in Domain Users and Administrators group to configure remoteapp
+	remoteAppDomainUserPermissionsRDS
 	
 	if($gpoRDSerrorsfound -gt 0){
 		Write-LogMessage -type Warning -MSG "Please fix GPO RDS related errors first."
@@ -2543,8 +3359,19 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                 SetScheduledTask -taskName $taskNameNLA -TriggerType $TriggerAtStart -taskDescription $taskDescrNLA -action $actionNLA -AdminUsername SYSTEM
 
                 # Set Schedule Task to resume RDS install after user logs back in
-                SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
-
+				if($OutOfDomain)
+				{
+					# if script was ran with out of domain flag, we make sure to resume out of domain checks after restart
+					SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $ActionRDSoutOfDomain -AdminUsername $AdminUserName
+				}
+				Else
+				{
+					SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+				}
+                
+				
+				# Skip CPMConnectionTest since we're about to perform restart anyway.
+				$script:CPMConnectionTestSkip = $true
 		    	Write-LogMessage -type Warning -MSG "The server will restart to apply Microsoft Remote Desktop Services, press ENTER to continue."
 		    	Pause
                 Restart-Computer -Force
@@ -2560,7 +3387,7 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 			    if (-not (IsLoginWithDomainUser))
 			    {
 					# if the computer is in a domain and the user is local, display relevant message
-					if ((Get-WmiObject -Class Win32_ComputerSystem).PartOfDomain)
+					if ((Get-CimInstance -Class Win32_ComputerSystem).PartOfDomain)
 					{
 						Write-LogMessage -type Warning -MSG "Machine is in domain but you are logged in with a local user, login with a domain user and rerun the script to complete RDS CB Install."
 						Pause
@@ -2587,7 +3414,17 @@ $script:RedirectDrivesValue	= "fDisableCdm"
                     Write-LogMessage -type Warning -MSG " 2. Script will automatically resume after restart, press ENTER to continue."
                     # Set Schedule Task to resume RDS install after user logs back in
                     $AdminUserName = whoami
-                    SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+					if($OutOfDomain)
+					{
+						# if script was ran with out of domain flag, we make sure to resume out of domain checks after restart
+						SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $ActionRDSoutOfDomain -AdminUsername $AdminUserName
+					}
+					Else
+					{
+						SetScheduledTask -taskName $taskNameRDS -TriggerType $TriggerAtLogon -taskDescription $taskDescrRDS -action $actionRDS -AdminUsername $AdminUserName
+					}
+					# Skip CPMConnectionTest since we're about to perform restart anyway.
+					$script:CPMConnectionTestSkip = $true
                     pause
                     Restart-Computer -Force
                 }
@@ -2620,12 +3457,19 @@ $script:RedirectDrivesValue	= "fDisableCdm"
 
                         #disable NLA just in case it comes back.
                         Disable-NLA
-                        		 				 
-                        Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
+
+                        $ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
+
+                        if($ConnectionBrokerFeature.Installed -eq $true){
+                            Write-LogMessage -type info -MSG "RDS Connection Broker was installed successfully"
+                        }
+                        Else{
+                            Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role, fix errors and rerun script."
+                        }
                     }
 			        catch
 			        {
-					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role"
+					    Write-LogMessage -type Error -MSG "Failed to install RDS Connection-Broker role, fix errors and rerun script."
 			        }
                 }
 			    else
@@ -2722,12 +3566,31 @@ function Disable-NLA()
 {
     # Disable NLA
     Write-LogMessage -type Info -MSG "Disabling NLA..." -Early
-    $disableNLA = (Get-WmiObject -Class "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices -ComputerName $env:COMPUTERNAME -Filter "TerminalName='RDP-tcp'").SetUserAuthenticationRequired(0)
+    $disableNLA = get-CimInstance "Win32_TSGeneralSetting" -Namespace root\cimv2\terminalservices -Filter 'TerminalName = "RDP-Tcp"' | Invoke-CimMethod -MethodName SetUserAuthenticationRequired -Arguments @{UserAuthenticationRequired = 0}
 
     # Remove scheduled Task so we don't run it infinitely.
     UnsetScheduledTask -taskName $taskNameNLA
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: PromptForRDSInstall
+# Description....: Prompt user for RDS install
+# Parameters.....: None
+# Return Values..: True/False
+# =================================================================================================================================
+function PromptForRDSInstall()
+{
+    $decisionPSM = Get-Choice -Title "Deploy RDS? (Required for Privileged Session Management)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
+    if ($decisionPSM -eq "Yes (Recommended)")
+    {
+        Write-LogMessage -type Info -MSG "Selected YES to install RDS." -Early
+        InstallRDS
+    }
+    Else
+    {
+        Write-LogMessage -type Info -MSG "Selected NOT to install RDS, skipping RDS role install..." -Early
+    }
+}
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: checkIfPSMisRequired
@@ -2737,25 +3600,25 @@ function Disable-NLA()
 # =================================================================================================================================
 function checkIfPSMisRequired()
 {
-    #Check if RDS/CB installed, 
+    # Check if RDS/CB installed, 
     $RDSFeature = Get-WindowsFeature *Remote-Desktop-Services*
-	$ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
+    $ConnectionBrokerFeature = Get-WindowsFeature *RDS-Connection-Broker*
 
-    if(($RDSFeature.Installed -eq $false) -or ($ConnectionBrokerFeature.Installed -eq $false))
+    if ($OutOfDomain -eq $true)
     {
-        $decisionPSM = Get-Choice -Title "Deploy RDS? (Required for Privileged Session Management)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
-        if ($decisionPSM -eq "Yes (Recommended)")
+        if ($RDSFeature.Installed -eq $false)
         {
-            Write-LogMessage -type Info -MSG "Selected YES to install RDS." -Early
-            InstallRDS
+            PromptForRDSInstall
         }
-        Else
+    }
+    else
+    {
+        if (($RDSFeature.Installed -eq $false) -or ($ConnectionBrokerFeature.Installed -eq $false))
         {
-            Write-LogMessage -type Info -MSG "Selected NOT to install RDS, skipping RDS role install..." -Early
+            PromptForRDSInstall
         }
     }
 }
-
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Get-Choice
@@ -2835,6 +3698,55 @@ Function Get-Choice{
     return $result
 }
 
+Function Get-IdentityURL($idURL) {
+    Add-Type -AssemblyName System.Net.Http
+
+    Function CreateHttpClient($allowAutoRedirect) {
+        $handler = New-Object System.Net.Http.HttpClientHandler
+        $handler.AllowAutoRedirect = $allowAutoRedirect
+        return New-Object System.Net.Http.HttpClient($handler)
+    }
+
+    # Create HttpClient with auto-redirect allowed
+    $client = CreateHttpClient($true)
+
+    try {
+        # Send a GET request to the URL
+        $response = $client.GetAsync($idURL).Result
+
+        # Check if the response status code indicates a redirection or success
+        if (($response.StatusCode -ge 300 -and $response.StatusCode -lt 400) -or ($response.StatusCode -eq "OK")) {
+            return $response.RequestMessage.RequestUri.Host
+        }
+        elseif ($response -eq $null) {
+            # Dispose the initial client and create a new one with auto-redirect disabled
+            $client.Dispose()
+            $client = CreateHttpClient($false)
+
+            $response = $client.GetAsync($idURL).Result
+            return $response.Headers.Location.Host
+        }
+        else {
+            Write-LogMessage -Type Error -Msg "Unexpected status code: $($response.StatusCode)"
+            return "Error: Unexpected status code: $($response.StatusCode)"
+        }
+    }
+    catch {
+        Write-LogMessage -Type Error -Msg "Error: $($_.Exception.Message)"
+        return "Error: $($_.Exception.Message)"
+    }
+    finally {
+        # Cleanup
+        if ($response -ne $null) {
+            $response.Dispose()
+        }
+        if ($client -ne $null) {
+            $client.Dispose()
+        }
+    }
+}
+
+
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: CPMConnectionTest
@@ -2844,7 +3756,20 @@ Function Get-Choice{
 # =================================================================================================================================
 Function CPMConnectionTest(){
 #Static
-$VaultOperationFolder = "$PSScriptRoot\VaultOperationsTester"
+$VaultOperationFolder1 = "$PSScriptRoot\VaultOperationsTester"
+$VaultOperationFolder2 = "$(Split-Path $PSScriptRoot -Parent)\VaultOperationsTester"
+
+ #Prereqs   
+if(Test-Path -Path "$VaultOperationFolder1\VaultOperationsTester.exe") {
+    $VaultOperationFolder = $VaultOperationFolder1
+} elseif(Test-Path -Path "$VaultOperationFolder2\VaultOperationsTester.exe") {
+    $VaultOperationFolder = $VaultOperationFolder2
+} else {
+    Write-LogMessage -Type Error -Msg "Required file 'VaultOperationsTester.exe' doesn't exist in expected folders: `"$VaultOperationFolder1`" or `"$VaultOperationFolder2`". Make sure you get the latest version and extract it correctly from zip."
+    Pause
+    Return
+}
+
 $stdoutFile = "$VaultOperationFolder\Log\stdout.log"
 $LOG_FILE_PATH_CasosArchive = "$VaultOperationFolder\Log\old"
 $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
@@ -2877,13 +3802,8 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
 
     }
- #Prereqs   
- if(!(Test-Path -Path "$VaultOperationFolder\VaultOperationsTester.exe")){
-     Write-LogMessage -Type Error -Msg "Required folder doesn't exist: `"$VaultOperationFolder`". Make sure you get the latest version and extract it correctly from zip. Rerun the script with -CPMConnectionTest flag."
-     Pause
-     Return
- }
- if((Get-WmiObject -Class win32_product | where {$_.Name -like "Microsoft Visual C++ 2013 x86*"}) -eq $null){
+ # redis++
+ if((Get-CimInstance -Class win32_product | where {$_.Name -like "Microsoft Visual C++ 2013 x86*"}) -eq $null){
     $CpmRedis = "$VaultOperationFolder\vcredist_x86.exe"
     Write-LogMessage -type Info -MSG "Installing Redis++ x86 from $CpmRedis..." -Early
     Start-Process -FilePath $CpmRedis -ArgumentList "/install /passive /norestart" -Wait
@@ -2913,7 +3833,13 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
         #Get Credentials
         Write-LogMessage -type Info -MSG "Enter Privilege Cloud InstallerUser Credentials"
-        $creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		$creds = Get-Credential -Message "Enter Privilege Cloud InstallerUser Credentials"
+		if($($creds.username) -match ' ' -or $($creds.GetNetworkCredential().Password) -match ' '){
+			Write-Host "Your Username/password has a space in it. We would fix it, but you may end up pasting it somewhere and wonder why it doesn't work :)" -ForegroundColor Yellow
+			Write-Host "Remove it and try again." -ForegroundColor Yellow
+			Pause
+            return
+		}
         #Check pw doesn't contain illegal char, otherwise installation will fail
         [string]$illegalchars = '\/<>{}''&"$*@`|'
         $pwerror = $null
@@ -2961,9 +3887,8 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
                 Write-LogMessage -type Warning -MSG "2) Logs folder was zipped (Use for Support Case): `"$ZipToupload.zip`""
                 [int]$lasthint = 4
                 If($stdout -match "ITACM040S"){
-                    [int]$lasthint = $lasthint+1
-                    Write-LogMessage -type Warning -MSG "3) Hint: Communication over 1858/TCP is required to utilize sticky session and maintain the same source IP for the duration of the session."
-                    Write-LogMessage -type Warning -MSG "4) In case of PA FW or similar configuration check out this page: "
+                    # [int]$lasthint = $lasthint+1
+                    Write-LogMessage -type Warning -MSG "3) In case of PA FW or similar configuration check out this page: "
                     Write-LogMessage -type Warning -MSG "   https://docs.cyberark.com/Product-Doc/OnlineHelp/PrivCloud-SS/Latest/en/Content/Privilege%20Cloud/Priv-Cloud-Firewall-setup.htm"
                 }
                 Else{
@@ -2974,11 +3899,50 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             Else{
                 $stdout | Write-Host -ForegroundColor DarkGray
                 Write-LogMessage -type Success -MSG "Connection is OK!"
+                $dateTEST = $(get-date -format yyyyMMdd) + "_" + $(get-date -format HHmm)
+                $machineNametrim = $($env:COMPUTERNAME).Substring($env:COMPUTERNAME.Length - 4)
+                $dummypass = "Tdsa6sdf4gkj2gdo!"
+                $dummyuser = "CPMConnectionTestPass_$($dateTEST)_$($machineNametrim)"
+                $logonBody = @{ username = "$($dummyuser)" ; password = "$($dummypass)" } | ConvertTo-Json -Compress
+                Try
+                {
+                    $targetUriString = "https://$($VaultIP.TrimStart("vault-"))/passwordvault/api/Auth/CyberArk/Logon"
+                    $targetUri = [Uri]$targetUriString
+                    $systemProxy = [System.Net.WebRequest]::GetSystemWebProxy()
+                    $systemProxy.Credentials = [System.Net.CredentialCache]::DefaultCredentials # Use this if your proxy requires authentication
+                    $proxyUri = $systemProxy.GetProxy($targetUri)
+                    
+                    if ($proxyUri.Host -ne $targetUri.Host)
+                    {
+                        # If the hosts are different, use the proxy
+                        $response = Invoke-RestMethod -Uri $targetUriString -ContentType "application/json" -Method Post -ErrorVariable pvwaERR -Body $logonBody -Proxy $proxyUri.AbsoluteUri
+                    }
+                    else
+                    {
+                        # If the hosts are the same, don't use the proxy
+                        $response = Invoke-RestMethod -Uri $targetUriString -ContentType "application/json" -Method Post -ErrorVariable pvwaERR -Body $logonBody
+                    }
+                }
+                Catch
+                {
+                    if($pvwaERR -like "*Authentication failure for User*"){
+                        Write-LogMessage -type Success -MSG "Sent a signal to our backend of this sucessful test @ TIME: $($dateTEST)"
+                    }Else{
+                        Write-LogMessage -type Warning -MSG "Failed to send a dummy string to CyberArk backend to signal that your prereq passed successfully, that's ok its optional anyway."
+                    }
+                        
+                }
                 Write-LogMessage -type Success -MSG "If you want to rerun this check in the future, run the script with -CPMConnectionTest or -Troubleshooting."
 
             # Add entry to ini file that this test passed and skip it from now on.
             Remove-Item -Path $CONFIG_PARAMETERS_FILE
-            Try{$parameters += @{CPMConnectionTestPassed = $True}}Catch{}
+            Try{
+                $parameters += @{
+                    CPMConnectionTestPassed = $True
+                    LastSuccessfulCPMPassDate = (Get-Date -Format "yyyy-MM-dd")
+                }
+            }
+            Catch{}
             $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
             }
 }
@@ -2997,7 +3961,7 @@ Function Set-ScriptParameters()
 param
 (
 	# Get the Portal URL
-	[Parameter(ParameterSetName='Regular',Mandatory=$true, HelpMessage="Example: https://<customerDomain>.privilegecloud.cyberark.com")]
+	[Parameter(ParameterSetName='Regular',Mandatory=$true, HelpMessage="Example: https://<customerDomain>.privilegecloud.cyberark.cloud")]
 	[AllowEmptyString()]
 	[Alias("PortalURL")]
 	[ValidateScript({
@@ -3007,10 +3971,6 @@ param
 		Else { $true }
 	})]
 	[String]${Please enter your provided portal URL Address (Or leave empty)},
-	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
-	[AllowEmptyString()]
-	[Alias("CustomerId")]
-	[String]${Please enter your CustomerId (Or leave empty)},
 	# Config File
 	[Parameter(ParameterSetName='File',Mandatory=$true)]
 	[ValidateScript({Test-Path $_})]
@@ -3021,7 +3981,6 @@ param
 	 {
         # ------ Copy parameter values entered ------
         $script:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}
-        $script:CustomerId = ${Please enter your CustomerId (Or leave empty)}
         # grab the subdomain, depending how the user entered the url (hostname only or URL).
         if($script:portalURL -match "https://"){
             $script:portalURL = ([System.Uri]$script:PortalURL).host
@@ -3049,7 +4008,6 @@ param
 			PortalURL = $PortalURL.Trim()
 			VaultIP = $VaultIP.trim()
 			TunnelIP = $TunnelIP.trim()
-            CustomerId = $CustomerId.trim()
 		}
 		$parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
         # deal with ispss
@@ -3060,11 +4018,41 @@ param
 		$script:VaultIP = $parameters.VaultIP
 		$script:TunnelIP = $parameters.TunnelIP
 		$script:PortalURL = $parameters.PortalURL
-        $script:CustomerId = $parameters.CustomerId
+        $script:LastSuccessfulCPMPassDate = $parameters.LastSuccessfulCPMPassDate
         # deal with ispss
         if($PortalURL -like "*.privilegecloud.cyberark.com"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
- }
+    
+    # Show the user the primary params we are going to check against.
+    Write-LogMessage -Type Info -SubHeader -Msg "Privilege Cloud Tenant Details:"
+    Write-LogMessage -type Success -MSG "Portal: $PortalURL"
+    Write-LogMessage -type Success -MSG "Vault:  $VaultIP"
+    Write-LogMessage -type Success -MSG "Tunnel: $TunnelIP"
+
+    # Check when was last time CPMConnectionTest ran, we want this to be fresh atleast 3 days before install date.
+    if($parameters.LastSuccessfulCPMPassDate)
+    {
+        # Convert the string date to DateTime for comparison
+        $lastSuccessDate = [DateTime]::ParseExact($parameters.LastSuccessfulCPMPassDate, "yyyy-MM-dd", $null)
+        
+        # Calculate the diff
+        $daysSinceLastSuccess = (Get-Date) - $lastSuccessDate
+
+        if($daysSinceLastSuccess.Days -gt 2)
+        {
+            Write-LogMessage -type Warning -MSG ("Last successful CPMConnectionTest was: " + $lastSuccessDate.ToString("yyyy-dd-MM") + ", let's run it again using -CPMConnectionTest.")
+        }
+        else
+        {
+            Write-LogMessage -type Success -MSG ("Last successful CPMConnectionTest was: " + $lastSuccessDate.ToString("yyyy-dd-MM"))
+        }
+    }
+    else 
+    {
+        # If the value doesn't exist
+        Write-LogMessage -type Info -MSG "Last successful CPMConnectionTest was: not yet performed." -Early
+    }
+}
 
 Function AddLineToTable($action, $resultObject)
 {
@@ -3141,7 +4129,7 @@ Function CheckPrerequisites()
 
 	Try
 	{
-        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]).Count
+        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]+$arrCheckPrerequisites.Values[4]).Count
 		Write-LogMessage -Type Info -SubHeader -Msg "Starting checking $cnt prerequisites..."
 		
         $global:table = @()
@@ -3299,6 +4287,7 @@ if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationC
 	Catch
 	{
 		Write-LogMessage -Type Info -Msg "Test-VersionUpdate: Couldn't check for latest version, probably DNS/FW Issue: $(Collect-ExceptionMessage $_.Exception.Message)" -Early
+        return # no need to run the rest if can't reach git.
 	}
 
 	If ($checkVersion -gt $versionNumber)
@@ -3319,7 +4308,7 @@ if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationC
 			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
 			Remove-Item -Path "$PSCommandPath.OLD"
             $scriptPathAndArgs = "& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting -InstallRDS:$InstallRDS -DisableNLA:$DisableNLA -skipVersionCheck:$SkipVersionCheck -SkipIPCheck:$SkipIPCheck"
-			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script."
+			Write-LogMessage -Type Info -Msg "Finished Updating, please relaunch script."
 			Pause
 			Exit
 		}
@@ -3517,8 +4506,8 @@ Function Get-LogHeader
 # Parameters.....: None
 # Return Values..: The Header image
 # =================================================================================================================================
-Function Get-LogoHeader{
-$t = @"
+Function Get-LogoHeader {
+    $t = @"
   ____      _                _         _    
  / ___|   _| |__   ___ _ __ / \   _ __| | __
 | |  | | | | '_ \ / _ \ '__/ _ \ | '__| |/ /
@@ -3528,21 +4517,30 @@ $t = @"
 
 "@
 
-for ($i=0;$i -lt $t.length;$i++) {
-if ($i%2) {
- $c = "green"
-}
-elseif ($i%5) {
- $c = "black"
-}
-elseif ($i%7) {
- $c = "gray"
-}
-else {
-   $c = "green"
-}
-write-host $t[$i] -NoNewline -ForegroundColor $c
-}
+    for ($i=0; $i -lt $t.Length; $i++) {
+        $c = "white"  # Default color
+
+        if ($i % 2 -eq 0) {
+            $c = "black"
+        }
+        elseif ($i % 3 -eq 0) {
+            $c = "cyan"
+        }
+        elseif ($i % 5 -eq 0) {
+            $c = "green"
+        }
+        elseif ($i % 7 -eq 0) {
+            $c = "magenta"
+        }
+        elseif ($i % 11 -eq 0) {
+            $c = "yellow"
+        }
+        elseif ($i % 13 -eq 0) {
+            $c = "red"
+        }
+
+        Write-Host $t[$i] -NoNewline -ForegroundColor $c
+    }
 }
 
 #endregion
@@ -3631,7 +4629,6 @@ else
 	            {
 		        $PortalURL = ([System.Uri]$PortalURL).Host
 	            }
-            $CustomerId = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "CustomerId:").ToString().ToLower().trim("customerid:").Trim()
             $VaultIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "VaultIp:").ToString().ToLower().trim("vaultip:").Trim()
             $TunnelIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "ConnectorServerIp:").ToString().ToLower().trim("connectorserverip:").Trim()
 
@@ -3639,7 +4636,6 @@ else
 			    PortalURL = $PortalURL
 			    VaultIP = $VaultIP
 			    TunnelIP = $TunnelIP
-                CustomerId = $CustomerId
 		    }
 		    $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
 		    }
@@ -3672,189 +4668,13 @@ else
         # Install RDS on the Initial Run
         checkIfPSMisRequired
 
-        # If VaultConnectivity passed, run CPM Test.
-        if($VaultConnectivityOK -eq $true){CPMConnectionTest}
+        # If VaultConnectivity passed, and no pending restart from InstallRDS, run CPM Test.
+        if(($VaultConnectivityOK -eq $true) -and ($null -eq $CPMConnectionTestSkip)){CPMConnectionTest}
+
 	} catch	{
 		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
 	}
 }
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 Pause
-###########################################################################################
-# Main end
-###########################################################################################
-# SIG # Begin signature block
-# MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
-# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB+kqm5ttXt+5u9
-# C5roKaEz5bt4nSaMlfxW7Ry9cpAa1qCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
-# th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
-# ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
-# bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
-# CzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTIwMAYDVQQD
-# EylHbG9iYWxTaWduIEdDQyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMDCCAiIw
-# DQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAMsg75ceuQEyQ6BbqYoj/SBerjgS
-# i8os1P9B2BpV1BlTt/2jF+d6OVzA984Ro/ml7QH6tbqT76+T3PjisxlMg7BKRFAE
-# eIQQaqTWlpCOgfh8qy+1o1cz0lh7lA5tD6WRJiqzg09ysYp7ZJLQ8LRVX5YLEeWa
-# tSyyEc8lG31RK5gfSaNf+BOeNbgDAtqkEy+FSu/EL3AOwdTMMxLsvUCV0xHK5s2z
-# BZzIU+tS13hMUQGSgt4T8weOdLqEgJ/SpBUO6K/r94n233Hw0b6nskEzIHXMsdXt
-# HQcZxOsmd/KrbReTSam35sOQnMa47MzJe5pexcUkk2NvfhCLYc+YVaMkoog28vmf
-# vpMusgafJsAMAVYS4bKKnw4e3JiLLs/a4ok0ph8moKiueG3soYgVPMLq7rfYrWGl
-# r3A2onmO3A1zwPHkLKuU7FgGOTZI1jta6CLOdA6vLPEV2tG0leis1Ult5a/dm2tj
-# IF2OfjuyQ9hiOpTlzbSYszcZJBJyc6sEsAnchebUIgTvQCodLm3HadNutwFsDeCX
-# pxbmJouI9wNEhl9iZ0y1pzeoVdwDNoxuz202JvEOj7A9ccDhMqeC5LYyAjIwfLWT
-# yCH9PIjmaWP47nXJi8Kr77o6/elev7YR8b7wPcoyPm593g9+m5XEEofnGrhO7izB
-# 36Fl6CSDySrC/blTAgMBAAGjggGtMIIBqTAOBgNVHQ8BAf8EBAMCAYYwEwYDVR0l
-# BAwwCgYIKwYBBQUHAwMwEgYDVR0TAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUJZ3Q
-# /FkJhmPF7POxEztXHAOSNhEwHwYDVR0jBBgwFoAUHwC/RoAK/Hg5t6W0Q9lWULvO
-# ljswgZMGCCsGAQUFBwEBBIGGMIGDMDkGCCsGAQUFBzABhi1odHRwOi8vb2NzcC5n
-# bG9iYWxzaWduLmNvbS9jb2Rlc2lnbmluZ3Jvb3RyNDUwRgYIKwYBBQUHMAKGOmh0
-# dHA6Ly9zZWN1cmUuZ2xvYmFsc2lnbi5jb20vY2FjZXJ0L2NvZGVzaWduaW5ncm9v
-# dHI0NS5jcnQwQQYDVR0fBDowODA2oDSgMoYwaHR0cDovL2NybC5nbG9iYWxzaWdu
-# LmNvbS9jb2Rlc2lnbmluZ3Jvb3RyNDUuY3JsMFUGA1UdIAROMEwwQQYJKwYBBAGg
-# MgECMDQwMgYIKwYBBQUHAgEWJmh0dHBzOi8vd3d3Lmdsb2JhbHNpZ24uY29tL3Jl
-# cG9zaXRvcnkvMAcGBWeBDAEDMA0GCSqGSIb3DQEBCwUAA4ICAQAldaAJyTm6t6E5
-# iS8Yn6vW6x1L6JR8DQdomxyd73G2F2prAk+zP4ZFh8xlm0zjWAYCImbVYQLFY4/U
-# ovG2XiULd5bpzXFAM4gp7O7zom28TbU+BkvJczPKCBQtPUzosLp1pnQtpFg6bBNJ
-# +KUVChSWhbFqaDQlQq+WVvQQ+iR98StywRbha+vmqZjHPlr00Bid/XSXhndGKj0j
-# fShziq7vKxuav2xTpxSePIdxwF6OyPvTKpIz6ldNXgdeysEYrIEtGiH6bs+XYXvf
-# cXo6ymP31TBENzL+u0OF3Lr8psozGSt3bdvLBfB+X3Uuora/Nao2Y8nOZNm9/Lws
-# 80lWAMgSK8YnuzevV+/Ezx4pxPTiLc4qYc9X7fUKQOL1GNYe6ZAvytOHX5OKSBoR
-# HeU3hZ8uZmKaXoFOlaxVV0PcU4slfjxhD4oLuvU/pteO9wRWXiG7n9dqcYC/lt5y
-# A9jYIivzJxZPOOhRQAyuku++PX33gMZMNleElaeEFUgwDlInCI2Oor0ixxnJpsoO
-# qHo222q6YV8RJJWk4o5o7hmpSZle0LQ0vdb5QMcQlzFSOTUpEYck08T7qWPLd0jV
-# +mL8JOAEek7Q5G7ezp44UCb0IXFl1wkl1MkHAHq4x/N36MXU4lXQ0x72f1LiSY25
-# EXIMiEQmM2YBRN/kMw4h3mKJSAfa9TCCB28wggVXoAMCAQICDHBNxPwWOpXgXVV8
-# DDANBgkqhkiG9w0BAQsFADBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFs
-# U2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVWIENvZGVT
-# aWduaW5nIENBIDIwMjAwHhcNMjIwMjE1MTMzODM1WhcNMjUwMjE1MTMzODM1WjCB
-# 1DEdMBsGA1UEDwwUUHJpdmF0ZSBPcmdhbml6YXRpb24xEjAQBgNVBAUTCTUxMjI5
-# MTY0MjETMBEGCysGAQQBgjc8AgEDEwJJTDELMAkGA1UEBhMCSUwxEDAOBgNVBAgT
-# B0NlbnRyYWwxFDASBgNVBAcTC1BldGFoIFRpa3ZhMRMwEQYDVQQJEwo5IEhhcHNh
-# Z290MR8wHQYDVQQKExZDeWJlckFyayBTb2Z0d2FyZSBMdGQuMR8wHQYDVQQDExZD
-# eWJlckFyayBTb2Z0d2FyZSBMdGQuMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
-# CgKCAgEA8rPX6yAVM64+/qMQEttWp7FdAvq9UfgxBrW+R0NtuXhKnjV05zmIL6zi
-# AS0TlNrQqu5ypmuagOWzYKDtIcWEDm6AuSK+QeZprW69c0XYRdIf8X/xNUawXLGe
-# 5LG6ngs2uHGtch9lt2GLMRWILnKviS6l6F06HOAow+aIDcNGOukddypveFrqMEbP
-# 7YKMekkB6c2/whdHzDQiW6V0K82Xp9XUexrbdnFpKWXLfQwkzjcG1xmSiHQUpkSH
-# 4w2AzBzcs+Nidoon5FEIFXGS2b1CcCA8+Po5Dg7//vn2thirXtOqaC+fjP1pUG7m
-# vrZQMg3lTHQA/LTL78R3UzzNb4I9dc8yualcYK155hRU3vZJ3/UtktAvDPC/ewoW
-# thebG77NuKU8YI6l2lMg7jMFZ1//brICD0RGqhmPMK9MrB3elSuMLaO566Ihdrlp
-# zmj4BRDCfPuH0QfwkrejsikGEMo0lErfHSjL3NaiE0PPoC4NW7nc6Wh4Va4e3VFF
-# Z9zdnoTsCKJqk4s13MxBbjdLIkCcfknMSxAloOF9h6IhzWOylSROAy/TZfGL5kzQ
-# qxzcIhdXLWHHWdbz4DD3qxYc6g1G3ZwgFPWf7VbKQU3FsAxgiJvmKPVeOfIN4iYT
-# V4toilRR8KX/IaA1NMrN9EiA//ZhN3HONS/s6AxjjHJTR29GOQkCAwEAAaOCAbYw
-# ggGyMA4GA1UdDwEB/wQEAwIHgDCBnwYIKwYBBQUHAQEEgZIwgY8wTAYIKwYBBQUH
-# MAKGQGh0dHA6Ly9zZWN1cmUuZ2xvYmFsc2lnbi5jb20vY2FjZXJ0L2dzZ2NjcjQ1
-# ZXZjb2Rlc2lnbmNhMjAyMC5jcnQwPwYIKwYBBQUHMAGGM2h0dHA6Ly9vY3NwLmds
-# b2JhbHNpZ24uY29tL2dzZ2NjcjQ1ZXZjb2Rlc2lnbmNhMjAyMDBVBgNVHSAETjBM
-# MEEGCSsGAQQBoDIBAjA0MDIGCCsGAQUFBwIBFiZodHRwczovL3d3dy5nbG9iYWxz
-# aWduLmNvbS9yZXBvc2l0b3J5LzAHBgVngQwBAzAJBgNVHRMEAjAAMEcGA1UdHwRA
-# MD4wPKA6oDiGNmh0dHA6Ly9jcmwuZ2xvYmFsc2lnbi5jb20vZ3NnY2NyNDVldmNv
-# ZGVzaWduY2EyMDIwLmNybDATBgNVHSUEDDAKBggrBgEFBQcDAzAfBgNVHSMEGDAW
-# gBQlndD8WQmGY8Xs87ETO1ccA5I2ETAdBgNVHQ4EFgQU0Vg7IAYAK18fI9dI1YKi
-# WA0D1bEwDQYJKoZIhvcNAQELBQADggIBAFOdA15mFwRIM54PIL/BDZq9RU9IO+YO
-# lAoAYTJHbiTY9ZqvA1isS6EtdYKJgdP/MyZoW7RZmcY5IDXvXFj70TWWvfdqW/Qc
-# MMHtSqhiRb4L92LtR4lS+hWM2fptECpl9BKH28LBZemdKS0jryBEqyAmuEoFJNDk
-# wxzQVKPksvapvmSYwPiBCtzPyHTRo5HnLBXpK/LUBJu8epAgKz6LoJjnrTIF4U8R
-# owrtUC0I6f4uj+sKYE0iV3/TzwsTJsp7MQShoILPr1/75fQjU/7Pl2fbM++uAFBC
-# sHQHYvar9KLslFPX4g+cDdtOHz5vId8QYZnhCduVgzUGvELmXXR1FYV7oJNnh3eY
-# Xc5gm7vSNKlZB8l7Ls6h8icBV2zQbojDiH0JOD//ph62qvnMp8ev9mvhvLXRCIxc
-# aU7CYI0gNVvg9LPi5j1/tswqBc9XAfHUG9ZYVxYCgvynEmnJ5TuEh6GesGRPbNIL
-# l418MFn4EPQUqxB51SMihIcyqu6+3qOlco8Dsy1y0gC0Hcx+unDZPsN8k+rhueN2
-# HXrPkAJ2bsEJd7adPy423FKbA7bRCOc6dWOFH1OGANfEG0Rjw9RfcsI84OkKpQ7R
-# XldpKIcWuaYMlfYzsl+P8dJru+KgA8Vh7GTVb5USzFGeMyOMtyr1/L2bIyRVSiLL
-# 8goMl4DTDOWeMYIRRDCCEUACAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
-# R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
-# IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
-# AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCC+
-# KUvtSdZfhTnv93s4mGrKL/C96meOkRE+X5Nzvw+LizANBgkqhkiG9w0BAQEFAASC
-# AgBFv6l/xB3FRnvMvb9555cemmN1AZ5HOPH7E61HWAS0zeTVQPOypigVxp99VO/T
-# NSVkG8oTxefs60ubFUt00WRCO33BnjZDcBsX6nvrZqGoGHXF0hcvqtgzYGF2SXQ6
-# LhbbuV02/7zAqcMpgvYod/9H+vZMG5YX9clPjMvvqkDuR6+w0s/utlvS2vLJdQIK
-# fkqAE/d5aVa9btGtz/buhECldAyX4xOAk6vmCxwoNjiiGBAY3w1AoYv3gHxeHFm+
-# 4U+bZder0q2hwd317/S4z1dCh4OHXr45v1Izt9ofKh9ucCm0KP37eoxqXNtLfrXK
-# O+Ih/xsAub5fdJOjol78wXnglCHpgD0JS2NG/cWY6OoINlFJD3cBupT0gRd66tAm
-# CDEBhaICIYuIv461pTVhj78vspgkIV2Q8wABKy2oCeqT7hEbc7ORtJasK1oU1Mv8
-# emvCdIfr6vvZO/x8Vmo7ODMdBju3sChB9YJUVXjtXuP8xgy1irW6SrMTOmSSF4ot
-# /6VrkvRhKkWtCXWNEnfiQ9aI40w5TQHtQckqwFaum/OIRb7+Q0HXD8OnxoEe104d
-# xBPb5z2+BgLEYDw/mmJTBVWUS33UksrQG5oa///uE/rrVZ/Dy/PeBrjGGNf6tjTM
-# 52VTwnkQRx1Ti/vAer6U8peFdoyO46wmzaQ4hr0RI4bljKGCDiswgg4nBgorBgEE
-# AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
-# BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBSWwm4ZrSiOwtGAuiP+I40dgZCxowIUAcRqREaXYcLkQpNnMJr7
-# ebipjc8YDzIwMjMwMjAxMTgwNjE3WjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
-# UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
-# dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
-# U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
-# yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMxFzAVBgNVBAoT
-# DlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVzdCBOZXR3b3Jr
-# MTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZvciBhdXRob3Jp
-# emVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBD
-# ZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEy
-# MzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3Jh
-# dGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMf
-# U3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJKoZIhvcNAQEB
-# BQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawyjwVrhponADKX
-# ak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG50F8eRzLy60b
-# v9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45ncP0mqj0hOHE
-# 0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU1t/HgNuR7v68
-# kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6x
-# zPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4G
-# A1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1UdIARfMF0wWwYL
-# YIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9j
-# cHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYB
-# BQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5jb20wNgYDVR0f
-# BC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNhbC1yb290LmNy
-# bDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQ
-# VGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
-# HwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZIhvcNAQELBQAD
-# ggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZk
-# hHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBj
-# SDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZr
-# jfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv2uybGB+queM6
-# AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6ita
-# s5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWvuswHP6EBIwQi
-# QU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1h
-# bnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29y
-# azEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTAeFw0x
-# NzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsG
-# A1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRy
-# dXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBp
-# bmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCv
-# Doqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQgbTD53R2D6T8n
-# SjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMjdUdwDLNfW48I
-# HXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj
-# 0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEm
-# LP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48
-# A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8EAjAAMGYGA1Ud
-# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
-# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
-# cGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5zeW1hbnRlYy5j
-# b20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYD
-# VR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcwAYYeaHR0cDov
-# L3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9odHRwOi8vdHMt
-# YWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAoBgNVHREEITAf
-# pB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+F
-# zBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
-# DQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZycGMv41UpezlG
-# Tud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZ
-# EPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9EPEZcF1rjpDvV
-# aSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6aescixXTN30cJ
-# hsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GYFHIUJN/HESwf
-# AD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJaMIICVgIBATCB
-# izB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24x
-# HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
-# dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
-# YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
-# 9w0BCQUxDxcNMjMwMjAxMTgwNjE3WjAvBgkqhkiG9w0BCQQxIgQgCiwO+PJCOUUc
-# SmX6Gzg297BcV0gckKoLGvPc4ei9EfUwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
-# xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
-# AC1Plr1EI5di1lyrQG4SMhsHIJHs0cNqKJ9VlxN4U6uAoRuef5arFptzqCVixD7V
-# n0UcgbY9djJWmmfH0mkpfefEDfJ/MVbenIgRA3ZkIBHs2d6IYSQZUBNMqZu/rrwO
-# W7JLbhLfnoRLtH/Jd8JzUAi0UotyEKm2uYbgEdF+e6JSCBSBV5Yv6XgovwJrMcn3
-# 6N5nl5OK6VdBbphB6K9vJPTnhhyTR4UGWnTXwqkds/vqQ/5WJ4tJopCoZcnOiSJa
-# 6GlC/Ur1yomPkEVNu+2Br71uXBiyzHNSWGnDB8NxDnydeDXmhZZf9YieQ4ZDI2Uq
-# vjeQFDc3w7Nk1cpjlsPQFtI=
-# SIG # End signature block
+#########################
