@@ -1,0 +1,82 @@
+Privilege Cloud Requirements
+============================
+vault-<Subdomain>.privilegecloud.cyberark.cloud:1858
+<tenant-id>.id.cyberark.cloud:443
+connector-<Subdomain>.privilegecloud.cyberark.cloud:443
+console.privilegecloud.cyberark.cloud:443
+<Subdomain>.cyberark.cloud:443
+<Subdomain>.privilegecloud.cyberark.cloud:443
+webaccess-<Subdomain>.privilegecloud.cyberark.cloud:443
+<Subdomain>.connectormanagement.cyberark.cloud:443
+
+Connector Management Based on <AWSRegion>
+===========================================
+connector-management-scripts-490081306957-<AWSRegion>.s3.amazonaws.com:443
+connector-management-assets-490081306957-<AWSRegion>.s3.amazonaws.com:443
+a3vvqcp8z371p3-ats.iot.<AWSRegion>.amazonaws.com:443
+component-registry-store-490081306957.s3.amazonaws.com:443
+
+AWS SSL
+=======
+crt.r2m02.amazontrust.com:80
+ocsp.r2m02.amazontrust.com:80
+
+Identity Connector
+==================
+This is based on the identity tenant pod being <IdentityPod>.
+
+<IdentityPod>-b1.relay.idaptive.app:443
+<IdentityPod>-b2.relay.idaptive.app:443
+<IdentityPod>-a1.relay.idaptive.app:443
+<IdentityPod>-a2.relay.idaptive.app:443
+pod0.idaptive.app:443
+edge.idaptive.app:443
+privacy-policy.truste.com:80
+ocsp.verisign.com:80
+ocsp.globalsign.com:80
+crl.globalsign.com:80
+secure.globalsign.com:80
+
+Dynamic Privilege Access outbound
+=================================
+cms-assets-bucket-445444212982.s3.amazonaws.com:443
+cms-assets-bucket-445444212982-<AWSRegion>.s3.<AWSRegion>.amazonaws.com:443
+<AWSRegion>.bc.be-privilege-access.cyberark.cloud:443
+<Subdomain>.dpa.cyberark.cloud:443
+a2m4b3cupk8nzj-ats.iot.<AWSRegion>.amazonaws.com:443
+
+Dynamic Privilege Access outbound from client (user) machines
+=============================================================
+<Subdomain>.ssh.cyberark.cloud:22
+<Subdomain>.rdp.cyberark.cloud:3389
+<Subdomain>.mariadb.cyberark.cloud:3306
+<Subdomain>.mysql.cyberark.cloud:3306
+<Subdomain>.oracle.cyberark.cloud:2484
+<Subdomain>.postgres.cyberark.cloud:5432
+<Subdomain>.mssql.cyberark.cloud:1433
+<Subdomain>.k8s.cyberark.cloud:443
+
+Dynamic Privilege Access LAN from connector server to target resources
+======================================================================
+To Linux targets:22
+To Windows targets:3389,135,445,139
+To Maria DB targets:3306
+To MySQL DB targets:3306
+To Oracle DB targets:2484
+To PostgreSQL DB targets:5432
+To MSSQL DB targets:1433,88,389,464
+To K8S targets:433
+
+Optional Rules
+===============
+The following rule is optional, it is used to gather the public egress IP.
+
+ipinfo.io:80
+
+
+Extras Info:
+===============
+AWS IP Ranges here: https://ip-ranges.amazonaws.com/ip-ranges.json
+
+Customers often ask how to whitelist static IPs of AWS since there are so many and they might change, and we recommend utilizing EDL (External Dynamic List) method, an example of an EDL provider https://docs.paloaltonetworks.com/resources/edl-hosting-service (This is just an example) You're welcome to research about this on google.
+
