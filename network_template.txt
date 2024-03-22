@@ -39,8 +39,8 @@ secure.globalsign.com:80
 
 Dynamic Privilege Access outbound
 =================================
-cms-assets-bucket-445444212982.s3.amazonaws.com:443
-cms-assets-bucket-445444212982-<AWSRegion>.s3.<AWSRegion>.amazonaws.com:443
+cms-assets-bucket-445444212982.s3.amazonaws.com:443 <---- if you are on US-EAST-1 region (since US east is default by AWS).
+cms-assets-bucket-445444212982-<AWSRegion>.s3.<AWSRegion>.amazonaws.com:443 <---- Other Regions must have region specified.
 <AWSRegion>.bc.be-privilege-access.cyberark.cloud:443
 <Subdomain>.dpa.cyberark.cloud:443
 a2m4b3cupk8nzj-ats.iot.<AWSRegion>.amazonaws.com:443
