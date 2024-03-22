@@ -67,6 +67,9 @@ param(
 ## Force Output to be UTF8 (for OS with different languages)
 $OutputEncoding = [Console]::InputEncoding = [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding
 
+## Enforce TLS
+$script:enforceTLS = $true
+
 ## List of checks to be performed on POC
 $arrCheckPrerequisitesPOC = @("CheckTLS1")
 
@@ -116,14 +119,21 @@ $arrCheckPrerequisitesCPM = @(
 )
 
 
-$arrCheckConnectorManagementPrerequisites = @(
+$arrCheckPrerequisitesCM = @(
 "ConnectorManagementScripts", #CM
 "ConnectorManagementAssets", #CM
 "ConnectorManagementComponentRegistry", #CM
-"ConnectorManagementIOT" #CM
+"ConnectorManagementIOT", #CM
 "ConnectorManagementIOTCert" # CM
 )
 
+$arrCheckPrerequisitesDPA = @(
+"DPA-Assets", 
+"DPA-BackendAccess",
+"DPA-Portal",
+"DPA-IOT",
+"DPA-IOTCert"
+)
 
 ## If not OutOfDomain then include domain related checks
 If (-not $OutOfDomain){
@@ -132,9 +142,10 @@ If (-not $OutOfDomain){
 ## Combine Checks from POC with regular checks
 If ($POC){
 	$arrCheckPrerequisitesGeneral += $arrCheckPrerequisitesPOC
+    $enforceTLS = $false
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},<#@{CPM = $arrCheckPrerequisitesCPM},#>@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckConnectorManagementPrerequisites}
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},<#@{CPM = $arrCheckPrerequisitesCPM},#>@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckPrerequisitesCM},@{DPA = $arrCheckPrerequisitesDPA}
 
 
 ## List of GPOs to check
@@ -162,7 +173,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "28"
+[int]$versionNumber = "29"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2479,12 +2490,12 @@ Function ConnectorManagementScripts{
         Try{
 	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
 	    	# Retrieve Identity from redirect
-            $IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+            $script:IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
             if($IdentityHeaderURL -like "*Error*"){
                 $errorMsg = "Error accessing URL '$($BasePlatformURL)' $($IdentityHeaderURL)"
             }Else{
                 # Find Identity Region
-                $GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
+                $script:GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
 
                 # Select region Name, so we can match it vs exception regions below
                 $searchRegion = $GetTenantDetails.Result.Region
@@ -2807,47 +2818,6 @@ function ConnectorManagementIOTCert {
 
     Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementIOTCert..."
     
-    function Get-SSLCertificateDetails {
-        param (
-            [Parameter(Mandatory=$true)]
-            [string]$Url
-        )
-        
-        $tcp = $null
-        $sslStream = $null
-        
-        try {
-            $uri = [System.Uri]::new($Url)
-            $tcp = New-Object System.Net.Sockets.TcpClient
-            try {
-                $tcp.Connect($uri.Host, $uri.Port)
-            } catch {
-                $originalErrorMsg = "Could not connect to $($uri.Host):$($uri.Port) Error: $($_.Exception.Message)"
-                Throw $originalErrorMsg
-            }
-            
-            $stream = $tcp.GetStream()
-            $sslStream = New-Object System.Net.Security.SslStream -ArgumentList $stream
-            try {
-                $sslStream.AuthenticateAsClient($uri.Host)
-            } catch {
-                $originalErrorMsg = "Failed to authenticate as client to $($uri.Host) Error: $($_.Exception.Message)"
-                Throw $originalErrorMsg
-            }
-            
-            $certificate = $sslStream.RemoteCertificate
-            if ($null -eq $certificate) { throw "Failed to get the remote certificate from the SslStream" }
-            
-            return $certificate
-        } catch {
-            $script:errMsg = "Error occurred while fetching CERT: $originalErrorMsg"
-            throw $errMsg
-        } finally {
-            $sslStream.Close()
-            $tcp.Close()
-        }
-    }
-    
     if (![string]::IsNullOrEmpty($Region)) {
         try {
             $CertURL = "https://a3vvqcp8z371p3-ats.iot.$($Region).amazonaws.com:443"
@@ -2866,6 +2836,256 @@ function ConnectorManagementIOTCert {
         }
     } else {
         $errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
+    }
+    
+    return [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+}
+
+Function DPA-Assets{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    $expected = "403"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+    Write-LogMessage -Type Verbose -Msg "Starting DPA-Assets..."
+
+
+    $portalSubDomainURL = $portalURL.Split(".")[0]
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($portalSubDomainURL)){
+        Try{
+	    	$BasePlatformURL = "https://$portalSubDomainURL.cyberark.cloud"
+	    	# Retrieve Identity from redirect
+            $script:IdentityHeaderURL = Get-IdentityURL -idURL $BasePlatformURL
+            if($IdentityHeaderURL -like "*Error*"){
+                $errorMsg = "Error accessing URL '$($BasePlatformURL)' $($IdentityHeaderURL)"
+            }Else{
+                # Find Identity Region
+                $script:GetTenantDetails = Invoke-RestMethod -uri "https://$($IdentityHeaderURL)/sysinfo/version" -UseBasicParsing -ErrorVariable respErr
+
+                # Select region Name, so we can match it vs exception regions below
+                $searchRegion = $GetTenantDetails.Result.Region
+
+                # Special exception for CM regions operated elsewhere.
+                if($searchRegion -eq "Eu South"){
+                    $searchRegion = "Frankfurt"
+                }
+                # Special exception for CM regions operated elsewhere.
+                if($searchRegion -eq "ap-southeast-3"){ # Jakarta
+                    $searchRegion = "AP Southeast" # Singapore
+                }
+
+                # Special exception for Australia and India since Identity uses same region name for them, we can distinguish by pod
+                if($searchRegion -eq "Asia Pacific"){
+                    if($GetTenantDetails.Result.Name -like "pod1302*" -or $GetTenantDetails.Result.Name -like "pod1306*")
+                    {
+                        $searchRegion = "Sydney"
+                    }
+                    Else{
+                        $searchRegion = "Asia Pacific"
+                    }
+                       
+                }
+
+                    # Match region from list and get region code.
+                    $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion} | select -ExpandProperty regionCode
+            }
+
+
+            if([string]::IsNullOrEmpty($region)){
+                Write-LogMessage -type Warning -msg "Error retrieving identity region via redirect of '$($BasePlatformURL)': $($IdentityHeaderURL)"
+                start-sleep 5
+                Write-Host "Select region manually"
+                Pause
+                $searchRegion = $availableRegions | Out-GridView -PassThru
+                $script:region = $availableRegions | Where-Object {$_.RegionName -eq $searchRegion.RegionName} | select -ExpandProperty regionCode
+            }
+
+        # Logic for DPA regions, if US east it doesn't require region code in the URL
+        if($region -eq "us-east-1"){
+            $url = "https://cms-assets-bucket-445444212982.s3.amazonaws.com"
+        }Else{
+            $url = "https://cms-assets-bucket-445444212982-$($region).s3.$($region).amazonaws.com"
+        }
+        
+	    	
+                # Start Connectivity test
+                Try{
+                    Invoke-WebRequest -Uri $url -UseBasicParsing -ErrorAction SilentlyContinue -TimeoutSec 10 -ErrorVariable respErr
+                    }
+                Catch
+                {
+                    if($_.Exception.Response.StatusCode.value__ -eq 403)
+                    {
+                        if($respErr.message -like "*(403) Forbidden*"){
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $true
+                            $errorMsg = ""
+                        }
+                        Else{
+                            # every other error within 403 response.
+                            $actual = $_.Exception.Response.StatusCode.value__
+                            $result = $false
+                            $errorMsg = "$($respErr)"
+                        }
+                    }
+                    Elseif($respErr -like "*certificate*")
+                    {
+                        # In case error is related to certificates
+                        $actual = $_.Exception.Response.StatusCode.value__
+                        $result = $false
+                        $errorMsg = "$($respErr.message) $($respErr.innerException.InnerException.Message) | hint: Try browsing to the URL: $($url) and check the certificate icon is secure, if not, You're either blocking it via GPO or FW policy, you can either disable those or copy over all amazon certs from another machine with good access by exporting and then importing. (we recommend solving the issue though)."
+                    }
+                    Else{
+                        # every other error.
+                        $errorMsg = "Tried reaching '$($url)', Received Error: $($respErr)"
+                        $result = $false
+                        $actual = $_.Exception.Response.StatusCode.value__
+                    }
+                }
+
+
+     
+        Write-LogMessage -Type Verbose -Msg "Finished DPA-Assets..."
+        }
+        Catch
+        {
+            $errorMsg = "Error: $(Collect-ExceptionMessage) $($respErr.message) $($_.exception.status) $($_.exception.Response.ResponseUri.AbsoluteUri)"
+
+        }
+    }
+	Else
+	{
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty"
+		$errorMsg = "Host name empty"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $expected;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+Function DPA-BackendAccess
+{
+	[OutputType([PsCustomObject])]
+	param ()
+    
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        $dpabeaddress = "$($region).bc.be-privilege-access.cyberark.cloud"
+	    Write-LogMessage -Type Verbose -Msg "Runing DPA-BackendAccess"
+	    return Test-NetConnectivity -ComputerName $dpabeaddress -Port 443
+    }
+	Else
+	{
+        # In case $region is empty, we override the entire test and return our own customObject result.
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (DPA-Assets failed?)"
+        $result = $false
+        return [PsCustomObject]@{
+		expected = $true;
+		actual = $false;
+		errorMsg = $errorMsg;
+		result = $result;
+	    }
+	}
+}
+
+Function DPA-Portal
+{
+	[OutputType([PsCustomObject])]
+	param ()
+    
+    $portalSubDomainURL = $portalURL.Split(".")[0]
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        $dpabeaddress = "$($portalSubDomainURL).dpa.cyberark.cloud"
+	    Write-LogMessage -Type Verbose -Msg "Runing DPA-Portal"
+	    return Test-NetConnectivity -ComputerName $dpabeaddress -Port 443
+    }
+	Else
+	{
+        # In case $region is empty, we override the entire test and return our own customObject result.
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (DPA-Assets failed?)"
+        $result = $false
+        return [PsCustomObject]@{
+		expected = $true;
+		actual = $false;
+		errorMsg = $errorMsg;
+		result = $result;
+	    }
+	}
+}
+
+
+Function DPA-IOT
+{
+	[OutputType([PsCustomObject])]
+	param ()
+
+    # skip check if portalUrl is empty
+    if(![string]::IsNullOrEmpty($region)){
+        $AwsIOTAddress = "a2m4b3cupk8nzj-ats.iot.$($region).amazonaws.com"
+	    Write-LogMessage -Type Verbose -Msg "Runing DPA-IOT"
+	    return Test-NetConnectivity -ComputerName $AwsIOTAddress -Port 443
+    }
+	Else
+	{
+        # In case $region is empty, we override the entire test and return our own customObject result.
+		Write-LogMessage -Type Info -Msg "Skipping test since host name is empty (Previous check probably failed)"
+		$errorMsg = "Skipping test since host name is empty (DPA-Assets failed?)"
+        $result = $false
+        return [PsCustomObject]@{
+		expected = $true;
+		actual = $false;
+		errorMsg = $errorMsg;
+		result = $result;
+	    }
+	}
+}
+
+function DPA-IOTCert {
+    [OutputType([PsCustomObject])]
+    param ()
+    
+    $expected = "CN=Amazon RSA 2048 M01, O=Amazon, C=US"
+    $result = $false
+    $errorMsg = ""
+    $actual = ""
+
+    Write-LogMessage -Type Verbose -Msg "Starting DPA-IOTCert..."
+    
+    if (![string]::IsNullOrEmpty($Region)) {
+        try {
+            $CertURL = "https://a2m4b3cupk8nzj-ats.iot.$($Region).amazonaws.com:443"
+            $cert = Get-SSLCertificateDetails -Url $CertURL
+            $actual = $cert.Issuer
+            
+            if ($actual -ne $expected) {
+                $errorMsg = "The expected certificate ('$($expected)') doesn't match the actual certificate received ('$($actual)'). Test it by browsing to this URL: '$($CertURL)'."
+            } else {
+                $result = $true
+            }
+
+            Write-LogMessage -Type Verbose -Msg "Finished DPA-IOTCert..."
+        } catch {
+            $errorMsg = "$(Collect-ExceptionMessage) $($errMsg)"
+        }
+    } else {
+        $errorMsg = "Skipping test since host name is empty (DPA-Assets failed?)"
     }
     
     return [PsCustomObject]@{
@@ -3316,6 +3536,102 @@ function AddNetworkLogonRight()
 	}
 }
 
+function Get-SSLCertificateDetails {
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$Url
+    )
+    
+    $tcp = $null
+    $sslStream = $null
+    
+    try {
+        $uri = [System.Uri]::new($Url)
+        $tcp = New-Object System.Net.Sockets.TcpClient
+        try {
+            $tcp.Connect($uri.Host, $uri.Port)
+        } catch {
+            $originalErrorMsg = "Could not connect to $($uri.Host):$($uri.Port) Error: $($_.Exception.Message)"
+            Throw $originalErrorMsg
+        }
+        
+        $stream = $tcp.GetStream()
+        $sslStream = New-Object System.Net.Security.SslStream -ArgumentList $stream
+    try {
+        $sslStream.AuthenticateAsClient($uri.Host, $null, [System.Security.Authentication.SslProtocols]::Tls12, $true)
+    } catch {
+        $originalErrorMsg = "Failed to authenticate as client to $($uri.Host) Error: $($_.Exception.Message)"
+    Throw $originalErrorMsg
+    }
+        
+        $certificate = $sslStream.RemoteCertificate
+        if ($null -eq $certificate) { throw "Failed to get the remote certificate from the SslStream" }
+        
+        return $certificate
+    } catch {
+        $script:errMsg = "Error occurred while fetching CERT: $originalErrorMsg"
+        throw $errMsg
+    } finally {
+        $sslStream.Close()
+        $tcp.Close()
+    }
+}
+
+Function enforceTLS {
+    # Check the current SecurityProtocol setting
+    $securityProtocol = [Net.ServicePointManager]::SecurityProtocol
+	if ($securityProtocol -ne 'SystemDefault' -and $securityProtocol -notmatch 'Tls12') {
+        Write-LogMessage -type Info -MSG "Detected SecurityProtocol not highest settings ('$($securityProtocol)'), enforcing TLS 1.2."
+		[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+	}
+        # Registry checks for .NET Framework strong cryptography settings
+        $GetTLSReg86 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' -Name "SchUseStrongCrypto" -ErrorAction SilentlyContinue
+        $GetTLSReg64 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' -Name "SchUseStrongCrypto" -ErrorAction SilentlyContinue
+        
+        # Registry checks for TLS 1.2 being explicitly disabled in Client and Server
+        $Gettls12ClientValue = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" -Name "Enabled" -ErrorAction SilentlyContinue
+        $Gettls12ServerValue = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "Enabled" -ErrorAction SilentlyContinue
+
+        $gettls12ClientDefaultDisabled = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" -Name "DisabledByDefault" -ErrorAction SilentlyContinue
+        $gettls12ServerDefaultDisabled = Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "DisabledByDefault" -ErrorAction SilentlyContinue
+
+        $TLSReg86 = $GetTLSReg86 -ne $null -and $GetTLSReg86.SchUseStrongCrypto -eq 0
+        $TLSReg64 = $GetTLSReg64 -ne $null -and $GetTLSReg64.SchUseStrongCrypto -eq 0
+        $tls12ClientValue = $Gettls12ClientValue -ne $null -and $Gettls12ClientValue.Enabled -eq 0
+        $tls12ServerValue = $Gettls12ServerValue -ne $null -and $Gettls12ServerValue.Enabled -eq 0
+        $tls12ClientDefaultDisabled = $gettls12ClientDefaultDisabled -ne $null -and $gettls12ClientDefaultDisabled.DisabledByDefault -eq 1
+        $tls12ServerDefaultDisabled = $gettls12ServerDefaultDisabled -ne $null -and $gettls12ServerDefaultDisabled.DisabledByDefault -eq 1
+
+        if ($TLSReg86 -or $TLSReg64 -or $tls12ClientValue -or $tls12ServerValue -or $tls12ClientDefaultDisabled -or $tls12ServerDefaultDisabled) {
+            Write-LogMessage -Type Info -MSG "Adjusting settings to ensure TLS 1.2 is not explicitly disabled and strong cryptography is enforced."
+            if ($TLSReg86) {
+                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force -Verbose
+            }
+            if ($TLSReg64) {
+                Set-ItemProperty -Path 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' -Name 'SchUseStrongCrypto' -Value 1 -Type DWord -Force -Verbose
+            }
+            if ($tls12ClientValue) {
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" -Name "Enabled" -Value 1 -Type DWord -Force -Verbose
+            }
+            if ($tls12ServerValue) {
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "Enabled" -Value 1 -Type DWord -Force -Verbose
+            }
+            if ($tls12ClientDefaultDisabled) {
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client" -Name "DisabledByDefault" -Value 0 -Type DWord -Force -Verbose
+            }
+            if ($tls12ServerDefaultDisabled) {
+                Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Server" -Name "DisabledByDefault" -Value 0 -Type DWord -Force -Verbose
+            }
+
+            Write-LogMessage -Type Warning -MSG "Settings adjusted. Please RESTART the system for the changes to take effect."
+            Write-LogMessage -Type Warning -MSG "If this check keeps looping, you can skip it with -skipTLS flag when running the script."
+            Pause
+            Exit
+        } else {
+            Write-LogMessage -Type Info -MSG "TLS 1.2 is properly configured." -Early
+        }
+}
+
 # can be removed later versions
 import-module RemoteDesktop -Verbose:$false | Out-Null;
 
@@ -3749,6 +4065,43 @@ Function Get-IdentityURL($idURL) {
     }
 }
 
+function Set-NetworkReqTemplate {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, HelpMessage='Please provide the template path')]
+        [ValidateNotNullOrEmpty()]
+        [string]$template,
+
+        [Parameter(Mandatory=$true, HelpMessage='Please provide the array of place holders')]
+        [ValidateNotNullOrEmpty()]
+        [array]$placeholders,
+
+        [Parameter(Mandatory=$true, HelpMessage='Please provide the array of placeholder values')]
+        [ValidateNotNullOrEmpty()]
+        [array]$placeholderValues,
+
+        [Parameter(Mandatory=$true, HelpMessage='Please provide the output file full path')]
+        [ValidateNotNullOrEmpty()]
+        [string]$outputFilePath
+    )
+
+    begin {
+        $templateData = Get-Content -Path $template -Raw
+    }
+
+    process {
+        for($i = 0; $i -lt $placeholders.Count; $i++){
+            $templateData = $templateData -replace $placeholders[$i], $placeholderValues[$i]
+        }
+
+    }
+
+    end {
+        Write-Host $template
+        $templateData | Set-Content -Path $outputFilePath
+    }
+}
+
 
 
 # @FUNCTION@ ======================================================================================================================
@@ -3792,7 +4145,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             {
                 Write-LogMessage -type Warning -MSG "OK, if you change your mind, you can always rerun the script with -CPMConnectionTest flag (or -Troubleshooting and selecting from menu)."
                 Pause
-                Exit
+                return
             }
         }
         ElseIf($CPMConnectionTest)
@@ -3801,7 +4154,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
         Else
         {
-            Break
+            Return
         }
 
     }
@@ -3938,7 +4291,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
                 Write-LogMessage -type Success -MSG "If you want to rerun this check in the future, run the script with -CPMConnectionTest or -Troubleshooting."
 
             # Add entry to ini file that this test passed and skip it from now on.
-            Remove-Item -Path $CONFIG_PARAMETERS_FILE
+            Remove-Item -Path $CONFIG_PARAMETERS_FILE -Force -ErrorAction SilentlyContinue
             Try{
                 $parameters += @{
                     CPMConnectionTestPassed = $True
@@ -4043,7 +4396,7 @@ param
 
         if($daysSinceLastSuccess.Days -gt 2)
         {
-            Write-LogMessage -type Warning -MSG ("Last successful CPMConnectionTest was: " + $lastSuccessDate.ToString("yyyy-dd-MM") + ", let's run it again using -CPMConnectionTest.")
+            Write-LogMessage -type Error -MSG ("Last successful CPMConnectionTest was: " + $lastSuccessDate.ToString("yyyy-dd-MM") + ", let's run it again using -CPMConnectionTest.")
         }
         else
         {
@@ -4132,7 +4485,7 @@ Function CheckPrerequisites()
 
 	Try
 	{
-        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]+$arrCheckPrerequisites.Values[4]).Count
+        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]+$arrCheckPrerequisites.Values[4]+$arrCheckPrerequisites.Values[5]).Count
 		Write-LogMessage -Type Info -SubHeader -Msg "Starting checking $cnt prerequisites..."
 		
         $global:table = @()
@@ -4622,34 +4975,34 @@ else
             Write-LogMessage -type Info -MSG "Checking if ConnectionDetails.txt file exist so we can fetch values from there instead of manually typing them." -Early
             $ConnectionDetailsFile = "$PSScriptRoot\*ConnectionDetails.txt"    
             if (Test-Path $ConnectionDetailsFile){
-            $PortalURL = ([System.Uri](Get-Content $ConnectionDetailsFile | Select-String -AllMatches "privilegecloud.cyberark.com").ToString().Trim("URL:")).Host
-            #Deal with TM format
-            if($PortalURL -eq $null)
-                {
-                $PortalURL = ([System.Uri](Get-Content $ConnectionDetailsFile | Select-String -AllMatches "privilegecloud.cyberark.com").ToString().Trim("URL:").Trim()).OriginalString
-                }
-            if($PortalURL -match "https://")
-	            {
-		        $PortalURL = ([System.Uri]$PortalURL).Host
-	            }
-            $VaultIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "VaultIp:").ToString().ToLower().trim("vaultip:").Trim()
-            $TunnelIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "ConnectorServerIp:").ToString().ToLower().trim("connectorserverip:").Trim()
+                $script:PortalURL = ([System.Uri](Get-Content $ConnectionDetailsFile | Select-String -AllMatches "privilegecloud.cyberark.com").ToString().Trim("URL:")).Host
+                #Deal with TM format
+                if($PortalURL -eq $null)
+                    {
+                    $script:PortalURL = ([System.Uri](Get-Content $ConnectionDetailsFile | Select-String -AllMatches "privilegecloud.cyberark.com").ToString().Trim("URL:").Trim()).OriginalString
+                    }
+                if($PortalURL -match "https://")
+	                {
+		            $script:PortalURL = ([System.Uri]$PortalURL).Host
+	                }
+                $VaultIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "VaultIp:").ToString().ToLower().trim("vaultip:").Trim()
+                $TunnelIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "ConnectorServerIp:").ToString().ToLower().trim("connectorserverip:").Trim()
 
-            $parameters = @{
-			    PortalURL = $PortalURL
-			    VaultIP = $VaultIP
-			    TunnelIP = $TunnelIP
-		    }
-		    $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
+                $parameters = @{
+			        PortalURL = $PortalURL
+			        VaultIP = $VaultIP
+			        TunnelIP = $TunnelIP
+		        }
+		        $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
 		    }
             ElseIf($PortalURL -match "https://")
-	            {
-		        $PortalURL = ([System.Uri]$PortalURL).Host
-	            }
+            {
+                $script:PortalURL = ([System.Uri]$PortalURL).Host
+            }
             Else
             {
-			Write-LogMessage -type Info -MSG "Prompting user for input" -Early
-			Set-ScriptParameters #Prompt for user input
+			    Write-LogMessage -type Info -MSG "Prompting user for input" -Early
+			    Set-ScriptParameters #Prompt for user input
             }
 		}
     } catch {
@@ -4665,6 +5018,8 @@ else
 		Write-LogMessage -Type Error -Msg "Failed to retrieve public IP - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 	try {
+        if($enforceTLS -eq $true){enforceTLS}
+
         # Main Pre-requisites check
 		CheckPrerequisites
 
@@ -4674,18 +5029,47 @@ else
         # If VaultConnectivity passed, and no pending restart from InstallRDS, run CPM Test.
         if(($VaultConnectivityOK -eq $true) -and ($null -eq $CPMConnectionTestSkip)){CPMConnectionTest}
 
+        # if network file template is missing, try downloading from git
+        $networkFileTemplate = "network_template.txt"
+        $networkReqFile = "network_requirements.txt"
+        If(-not($templateExists)){
+            Try{
+                Write-LogMessage -type Info -MSG "Missing $networkFileTemplate Attemping to download from Github." -Early
+                Invoke-WebRequest -URI "https://raw.githubusercontent.com/pCloudServices/cmprereq/main/$networkFileTemplate" -UseBasicParsing -TimeoutSec 20 -OutFile "$ScriptLocation\$networkFileTemplate"
+            }Catch{}
+        }
+        # if file downloaded or already existed, check global params and populate template file
+        if(Test-Path "$ScriptLocation\$networkFileTemplate"){
+            $valuesExist = $null -ne $PortalURL -and
+            $null -ne $IdentityHeaderURL -and
+            $null -ne $region -and
+            $null -ne $GetTenantDetails.Result.Name
+            # if both file and variables exists lets set them in the template file.
+            if($valuesExist){
+                Set-NetworkReqTemplate -template "$ScriptLocation\$networkFileTemplate" -placeholders @("<Subdomain>","<tenant-id>","<AWSRegion>","<IdentityPod>") -placeholderValues @($($PortalURL.Split(".")[0]),$IdentityHeaderURL,$region,$($GetTenantDetails.Result.Name)) -outputFilePath "$ScriptLocation\$networkReqFile"
+                Start-Process "$ScriptLocation\$networkReqFile"
+            }Else{
+                Write-LogMessage -type Info -MSG "Couldn't print network requirement file, that's ok, it's optional."
+                write-host $PortalURL.Split(".")[0]
+                Write-Host $IdentityHeaderURL
+                Write-Host $region
+                Write-Host $GetTenantDetails.Result.Name
+            }
+        }
+               
+
 	} catch	{
 		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
 	}
 }
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
-Pause
 #########################
+
 # SIG # Begin signature block
 # MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAlVt7IGuWg4tvw
-# 19Jmr9VT9jdbZcP4sOeCp7JP3ADtlKCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDso4XA7QXq2NCO
+# iBMinHgT+oRK6QHEecc4moA0+IZ5a6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4820,22 +5204,22 @@ Pause
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIHpap7JddzPof7A/FwsorVsPT7eD1/u35REXaVJWi0YyMA0GCSqGSIb3
-# DQEBAQUABIICANMIyjK5IvlGGqSovySJgXCdoOwteOUryPBx/9/2mMCCLJVStydG
-# Oyo4o6wkCrIRmiqiP3zfhJjOhudi0v5Rgw4CDiHC9S5nJpUEoUhLBuQpKRGqHnwT
-# mBy2uBELT9svAkraKTSV1tb/hziWSCVfShRjQmdt08Lk55a9sF1PU15D9h0EPw5D
-# vvlB4Q0Z314KyLDVdfJjsJT0YWtByh8f0vUBvmnIpVzBnkMRu/1Tc13nJ36ampb0
-# 8s+rCC2xAK/i1s3uBAcKXfDrTnKswIp6xp0bGdSByvduCJIeFknFqxhJmgPFU8dg
-# EXp6aI/TxHxQqwXcUn0Kv7vIvk9Fhy/OI6IIs9Dkk3En2mZgDOi6KID1wlm18pvL
-# i8jK29QIz0oYyUL+CrmvAHs7Me+MlH5G9D3nOpx59EkyBhfVBD3UOTM9HWt66cLD
-# BT3uJdlj/dbDQ+IaBfQfakQ4U9hnj30cxkjtP4T3T6NigjxIwBe80EztPr3asXwq
-# T2Rbkx84ZJAdkbt/66y45GCj3jgr9wgMMxsW2f/flzAqbTQ3s1CDEWoUZpsr4GBj
-# 3wB74fo8fOLc4SiEirYeWIP2q4fJR6LuGpMhbSeX/wXr7u+5avyZvgyrMtneHHA/
-# m1LJBS5ogbqDTlGuOdxsb4SAIxt+ZRxADt+kSQLR1kNFl+rAqriNkFjJoYIOLDCC
+# AQkEMSIEIEwbyypAlVFsJEL0Eu++NwovvDZqMZlo0jobg6sYC0JrMA0GCSqGSIb3
+# DQEBAQUABIICAD4u+yNBbhBZB0cAp8bGY/ydfiUmbXvwixnsTjvKoo3dQnze5Tvx
+# 2K2cLZB04ydgjUlVYc3ia1ZvZ+we95Hs/yyrZWQ0IOYq0GBfcqUEKj2gPLtqynRl
+# Y9I/r0ZtQxMlGBt08PEqQpm29waJg1enGKNT5E83r309mf+0K+AAQz2HJ2WeRzOL
+# ZUX0/XZO2/VfI8IJi2F0oiBlw7l0ZIYqvBThQvbkrcTQS9HtlE3DwdrxKBZzfjPc
+# WCI2OeH+AdFAPlrB+ixV+GXf/vrAe4dQDwSo7nvvG8jZQvvBb+Ehy1wUyziINIlJ
+# mOQSi6Nwz9rVXXZBhe6pef5ecrSuKB5J3HwhTSApNYKd6xbyVFVymE+s0ar8xCTE
+# EhYEJ0Q0nYrsnMBIyR0z4pcsFMfb6WXJi2TrPAiuDfQ0iXHntbUJLn3nu2THOLvb
+# VPvhzuBGQ6z1EJ55uRRbVN1JzFDGV/UpcsefrN62rdOjEbfwkc576kQPSP+D/xXd
+# nCaFPlLeiNad3Xddfyh+hvYsr5fbkOsgUrDfR2GmszhX47yjApl1BLooylmgkVEE
+# h+6cGnOTIMprsxmhXWWfGYxOkZdYrabw0w0kwF8Ce/J8IVWuMS0aFVupumdrYTJu
+# HVQhtK805asjhj/GBKQGha7OWcNUxYLG+ua8r9MuA7nOIxh/fwTsywvHoYIOLDCC
 # DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
 # BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFG7drJAyMqdSbmDP3Gd+uer5m9biAhUAi5Z+WGzh
-# k8tVuUVa54reVd6GI6IYDzIwMjQwMzE4MjEyNzEzWjADAgEeoIGGpIGDMIGAMQsw
+# AQcXAzAhMAkGBSsOAwIaBQAEFJAMv5VH3uQ5g/EBsLZJljVnvK5DAhUAkMuUBjKf
+# ElxMWHvqjfL0jsswbegYDzIwMjQwMzIyMDIxMzQ4WjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -4899,13 +5283,13 @@ Pause
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjQwMzE4MjEyNzEzWjAvBgkqhkiG9w0BCQQxIgQg
-# Z683Hn71G+CObd+gX6aYoG0843BQLu6/OMlD29RmoZcwNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjQwMzIyMDIxMzQ4WjAvBgkqhkiG9w0BCQQxIgQg
+# EyUPqnnZ+HnjygOA4NYamkHkSIeKGUZ+oY5fk4Bl0nowNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBAFNhFr1kr+rLwy16pJt46+JRL+oF+7ZUvqx4x3dphgAEVtHTOyut
-# PJ4OBVnhdQoDFsxV6MCMxjzo1WwuxWC/x4itakzXuj4OW8caRb/fomx4/UYOFU57
-# 51lQasPjjdxvDYtDjW2xvjVWIImvUXasWwi6IKhxgLcRFBoyRy/8RYeoJZViwtyh
-# lR28XDMrd6ULzVd4lJTO9WfYSt05pOwK0iw3pdbAAN7GbiSoAdfYR8T2rCbvkHZM
-# /l9vo1GqbQmpK5KuwISEkx94gefx/OGoy97iCXOKMYYg7dKCsaF7G6HYmSqHWtfl
-# yVs6nj+NbBzkbBTlAM4S6jYGFVqPHYK4wLk=
+# hvcNAQEBBIIBAHTzi5XbZmT8A/lubnUMtnavJrmO6lMbl/HqPzM8uJjwlOP6ibJK
+# S4Ayep6t4AXe89NhkWXeHUC3WOutJmCvrL3lARE6YG2dvt6IhO+D8biktuS1GbTI
+# Vv3tkr9K6a4l7d4YZA57uNsSCh7RzMSD95sT2yMCfY+jgw+dFgA/KZuqYyRBDZzw
+# ty44FYHlAX8KeleHLjkLgYK1HUZxxS2dKsnPkPVB2J8GwPlcA4g4pVYtU8Iy78xd
+# ryI4F4qCuf+JtSmsWJgPMoqX201gQxCtIkmgHVmBGwBusvhOppI81X43XqbRrS+N
+# 9igoJ64dMO3cV36tNWQBWTVNnFSuHa2ygKc=
 # SIG # End signature block
