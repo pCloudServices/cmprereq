@@ -6,7 +6,8 @@ connector-<Subdomain>.privilegecloud.cyberark.cloud:443
 console.privilegecloud.cyberark.cloud:443
 <Subdomain>.cyberark.cloud:443
 <Subdomain>.privilegecloud.cyberark.cloud:443
-webaccess-<Subdomain>.privilegecloud.cyberark.cloud:443
+webaccess-<Subdomain>.privilegecloud.cyberark.cloud:443 <--- Legacy HTML5
+<Subdomain>.webaccess.cyberark.cloud:443 <--- Modern HTML5
 <Subdomain>.connectormanagement.cyberark.cloud:443
 
 Connector Management Based on <AWSRegion>
@@ -48,7 +49,7 @@ a2m4b3cupk8nzj-ats.iot.<AWSRegion>.amazonaws.com:443
 Dynamic Privilege Access outbound from client (user) machines
 =============================================================
 <Subdomain>.ssh.cyberark.cloud:22
-<Subdomain>.rdp.cyberark.cloud:3389
+<Subdomain>.rdp.cyberark.cloud:443/8443
 <Subdomain>.mariadb.cyberark.cloud:3306
 <Subdomain>.mysql.cyberark.cloud:3306
 <Subdomain>.oracle.cyberark.cloud:2484
