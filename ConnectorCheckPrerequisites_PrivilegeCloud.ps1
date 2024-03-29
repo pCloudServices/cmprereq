@@ -74,7 +74,7 @@ $script:enforceTLS = $true
 $arrCheckPrerequisitesPOC = @("CheckTLS1")
 
 ## List of checks to be excluded when machine is out of domain
-$arrCheckPrerequisitesOutOfDomain = @("DomainUser","PrimaryDNSSuffix","remoteAppDomainUserPermissions") #PSM
+$arrCheckPrerequisitesOutOfDomain = @("DomainUser","remoteAppDomainUserPermissions") #PSM
 
 ## List of checks to be performed on every run of the script
 $arrCheckPrerequisitesGeneral = @(
@@ -86,13 +86,10 @@ $arrCheckPrerequisitesGeneral = @(
 "Memory", #General
 "InterActiveLoginSmartCardIsDisabled", #General
 "UsersLoggedOn", #General
-"IPV6", #General
+#"IPV6", #General
 "MachineNameCharLimit", #General
 "MinimumDriveSpace", #General
 "DotNet", #General
-#"PSRemoting", #General
-#"WinRM", #General
-#"WinRMListener", #General
 "PendingRestart", #General
 "CheckNoProxy",
 "CheckEndpointProtectionServices", #General
@@ -149,17 +146,17 @@ $arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},<#@{CPM = $a
 
 
 ## List of GPOs to check
-$arrGPO = @(
-       [pscustomobject]@{Name='Require user authentication for remote connections by using Network Level Authentication';Expected='Not Configured'}
-	   [pscustomobject]@{Name='Select RDP transport protocols'; Expected='Not Configured'}	
-       [pscustomobject]@{Name='Use the specified Remote Desktop license servers'; Expected='Not Configured'}   
-	   [pscustomobject]@{Name='Set client connection encryption level'; Expected='Not Configured'}
-	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Not Configured'}
-       [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Not Configured'}
-       [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Not Configured'}
-       [pscustomobject]@{Name='Prevent running First Run wizard'; Expected='Not Configured'}
-       [pscustomobject]@{Name='Allow Remote Shell Access'; Expected='Not Configured'}
-       [pscustomobject]@{Name='Interactive logon: Require Smart card'; Expected='Not Configured'}
+$arrGPOPSM = @(
+       [pscustomobject]@{Name='Require user authentication for remote connections by using Network Level Authentication';Expected='Not Configured'} # Break PSM func
+	   [pscustomobject]@{Name='Select RDP transport protocols'; Expected='Not Configured'}	# Break PSM func
+	   [pscustomobject]@{Name='Set client connection encryption level'; Expected='Not Configured'} # Break PSM func
+       [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Not Configured'} # Break PSM func
+       [pscustomobject]@{Name='Interactive logon: Require Smart card'; Expected='Not Configured'} # Break PSM func
+   )
+   
+$arrGPOGeneric = @(
+       [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Not Configured'} # RDS install
+       [pscustomobject]@{Name='Allow Remote Shell Access'; Expected='Not Configured'} # RDS install
    )
 
 
@@ -173,7 +170,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "29"
+[int]$versionNumber = "30"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -703,50 +700,6 @@ Function NetworkAdapter
 
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: IPv6
-# Description....: Check if IPv6 is enabled or not
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function IPV6
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting IPv6..."
-		$actual = ""
-		$result = $false
-		$errorMsg = ""
-	
-		$arrInterfaces = (Get-CimInstance -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
-		$IPv6Status = ($arrInterfaces | Where-Object { $_.contains("::") }).Count -gt 0
-
-		if($IPv6Status)
-		{
-			$actual = "Enabled"
-			$result = $false
-            $errorMsg = "Disable IPv6, You can rerun the script with -Troubleshooting flag to do it."
-		}
-		else 
-		{
-			$actual = "Disabled"
-			$result = $true
-		}
-		
-		Write-LogMessage -Type Verbose -Msg "Finished IPv6"
-	} catch {
-		$errorMsg = "Could not get IPv6 Status. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-	
-	return [PsCustomObject]@{
-		expected = "Disabled";
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
 # Name...........: Secondary Logon
 # Description....: Check if Secondary Logon Service is running
 # Parameters.....: None
@@ -891,357 +844,6 @@ function DotNet()
         result = $result;
     }
 }	
-
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: PSRemoting
-# Description....: Check if PSRemoting is enabled or not
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function PSRemoting
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting PSRemoting..."
-		$actual = ""	
-		$result = $false
-		$errorMsg = ""
-		If($(Test-WSMan -ComputerName "localhost" -ErrorAction SilentlyContinue))
-		{
-			try 
-			{
-				Invoke-Command -ComputerName $env:COMPUTERNAME -ScriptBlock { ; } -ErrorAction Stop | out-null
-				$actual = "Enabled"	
-				$result = $true
-			} 
-			catch 
-			{
-				$actual = "Disabled"
-				$result = $false
-				
-				$UserMemberOfProtectedGroup = $(Get-UserPrincipal).GetGroups().Name -match "Protected Users"
-				if ($UserMemberOfProtectedGroup)
-				{
-					$errorMsg = "Current user was detected in 'Protected Users' group in AD, remove from group."
-				}
-				else
-				{
-					$errorMsg = "Could not connect using PSRemoting to $($env:COMPUTERNAME), Error: $(Collect-ExceptionMessage $_.exception.Message)"
-				}
-			}
-		} Else {
-			$actual = "Disabled"
-			$result = $false
-			$errorMsg = "Run 'winrm quickconfig' to analyze root cause"
-		}
-		Write-LogMessage -Type Verbose -Msg "Finished PSRemoting"	
-	} catch {
-		$errorMsg = "Could not get PSRemoting Status. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-	
-	return [PsCustomObject]@{
-		expected = "Enabled";
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: WinRM
-# Description....: Check if WinRM is enabled or not
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function WinRM
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting WinRM..."
-		$actual = ""	
-		$result = $false
-		$errorMsg = ""
-		$WinRMService = (Get-Service winrm).Status -eq "Running"
-		Start-sleep 1
-
-		if ($WinRMService)
-		{
-				#Force the output to be in English in case this is ran on non EN OS.
-                [Threading.Thread]::CurrentThread.CurrentUICulture = 'en-US'
-                [CultureInfo]::CurrentUICulture = 'en-US'
-			if ($getCRredSSP = ((Get-WSManCredSSP) -like "*This computer is not configured*"))
-			{
-				try {
-					Enable-WSManCredSSP -Role Server -Force  | Out-Null
-				} catch {
-					if ($_.Exception.Message -like "*The config setting CredSSP cannot be changed because is controlled by policies*")
-					{
-						$errorMsg = "Can't Enable-WSManCredSSP, enforced by GPO."
-					}
-					Else
-					{
-						$errorMsg = $_.Exception.Message
-					}
-					$actual = $false
-					$result = $actual
-			   }
-			}
-			else
-			{
-			   $actual = (Get-Item -Path "WSMan:\localhost\Service\Auth\CredSSP").Value
-			   if ($actual -eq $true){$result = "True"}
-			}
-		}
-		else 
-		{
-			$errorMsg = "Verify WinRM service is running"
-		}
-	
-		Write-LogMessage -Type Verbose -Msg "Finished WinRM"	
-	} catch {
-		$errorMsg = "Could not get WinRM Status. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-	
-	return [PsCustomObject]@{
-		expected = "True";
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: WinRMListener
-# Description....: Check if WinRM is listening on the correct protocal and port
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function WinRMListener
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting WinRMListener..."
-		$actual = ""
-		$result = $false
-		$errorMsg = ""
-
-        $winrmListen = Get-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{address="*";Transport="HTTPS"} -ErrorAction Stop
-		if ($winrmListen.Transport -eq "HTTPS" -and $winrmListen.Enabled -eq "true")
-		{
-              #Get Cert permissions
-              $getWinRMCertThumb = Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Thumbprint -eq ($winrmListen.CertificateThumbprint)}
-              $rsaCert = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($getWinRMCertThumb)
-              $filename = $rsaCert.key.uniquename
-
-              #Check where Key is stored since it can be in two places
-              if (Test-Path -Path "$g_CryptoPath\Keys\$filename"){
-              $certkeypath = "$g_CryptoPath\Keys\$filename"}
-              else{
-              $certkeypath = "$g_CryptoPath\RSA\MachineKeys\$Filename"
-              }
-              $certPermissions =  Get-Acl -Path $certkeypath
-              If ($certPermissions.Access.IdentityReference -contains "NT AUTHORITY\NETWORK SERVICE")
-              {
-			  $actual = $true
-			  $result = $True
-              }
-              Else
-              {
-              $actual = "Empty"
-			  $result = $false
-			  $errorMsg = "WinRM HTTPS Cert doesn't have correct permissions (NETWORK SERVICE user needs 'read' permission, adjust this manually, if you don't know how, rerun the script with -Troubleshooting flag and select 'WinRMListenerPermissions'"
-              }
-            #Add Another IF, after successful check for HTTPs, check the thumbprint of the cert, and see if NETWORK SERVICE user has access to it (just read permission).
-		} 
-		else 
-		{
-			  $actual = "Empty"
-			  $result = $false
-			  $errorMsg = "WinRM Listener isn't receiving on HTTPS, check it with the following command 'Winrm e winrm/config/listener' in ps"
-		}
-
-		Write-LogMessage -Type Verbose -Msg "Finished WinRMListener"
-	} catch {
-        $errorMsg = "WinRM Listener isn't receiving on HTTPS, check it with the following command 'Winrm e winrm/config/listener' in ps, you can also rerun the script with -Troubleshooting flag to configure it"
-		#$errorMsg = "Could not check WinRM Listener Port. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-	
-	return [PsCustomObject]@{
-		expected = $True;
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: NoPSCustomProfile
-# Description....: Check if there is no PowerShell custom profile
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-function NoPSCustomProfile
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting NoPSCustomProfile..."
-		$actual = ""
-		$errorMsg = ""
-		$result = $true
-
-		$profileTypes = "AllUsersAllHosts","AllUsersCurrentHost","CurrentUserAllHosts","CurrentUserCurrentHost"
-
-		ForEach($profiles in $profileTypes)
-		{
-			if (Test-Path -Path $profile.$profiles)
-			{
-				$errorMsg = "Custom powershell profile detected, unload it from Windows and restart PS instance."
-				$result = $false
-				break
-			}
-		}
-		Write-LogMessage -Type Verbose -Msg "Finished NoPSCustomProfile"	
-	} catch {
-		$errorMsg = "Could not get PowerShell custom profile Status. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-	
-	return [PsCustomObject]@{
-		expected = "False";
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: KBs
-# Description....: Check if all relevant KBs are installed
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function KBs
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting KBs..."
-		$actual = ""
-		$errorMsg = ""
-		$otherOS = $false
-		$result = $false
-
-		$hotFixes = ""
-		$osVersion = [System.Environment]::OSVersion.Version
-		
-		if ($osVersion.Major -eq 10)
-		{
-			# currently there are no KBs to check on win 2016
-			$hotFixes = ""
-		}
-		elseif (($osVersion.Major -eq 6) -And ($osVersion.Minor -eq 3) -And ($osVersion.Build -eq 9600))
-		{
-			$hotFixes = @('KB2919355','KB3154520')
-		}
-		else
-		{
-			$otherOS = $true
-			$result = $true		
-		}
-		
-		if (!$otherOS)
-		{
-			if($hotFixes -eq "")
-			{
-				$errorMsg = $g_SKIP
-				$result =  $true
-			}
-		 
-			else
-			{
-				$pcHotFixes = Get-HotFix $hotFixes -EA ignore | Select-Object -Property HotFixID 
-		
-				#none of the KBs installed
-				if($null -eq $pcHotFixes)
-				{
-					$errorMsg = "KBs not installed: $hotFixes"
-					$actual = "Not Installed"
-					$result = $false
-				}
-
-				else
-				{	
-					$HotfixesNotInstalled = $hotFixes | Where-Object { $_ -notin $pcHotFixes }
-		
-					if($HotfixesNotInstalled.Count -gt 0)
-					{			
-						$errorMsg = "KBs not installed: $($HotfixesNotInstalled -join ',')"
-						$actual = "Not Installed"
-						$result = $false
-					}
-					else
-					{
-						$actual = "Installed"
-						$result = $true
-					}
-				}
-			}
-		}
-
-		Write-LogMessage -Type Verbose -Msg "Finished KBs"
-	} catch {
-		$errorMsg = "Could not get Installed KBs. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-	
-	return [PsCustomObject]@{
-		expected = "Installed";
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: ServerInDomain
-# Description....: Check if the server is in Domain or not
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function ServerInDomain
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting ServerInDomain..."
-		$result = $false
-    
-		if ((Get-CimInstance win32_computersystem).partofdomain)
-		{
-			  $actual = "In Domain"
-			  $result = $true
-		} 
-		else 
-		{
-			  $actual = "Not in Domain"
-			  $result = $false
-		}
-
-		Write-LogMessage -Type Verbose -Msg "Finished ServerInDomain"
-	} catch {
-		$errorMsg = "Could not verify if server is in Domain. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-		
-	return [PsCustomObject]@{
-		expected = "In Domain";
-		actual = $actual;
-		errorMsg = "";
-		result = $result;
-	}
-}
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: DomainUser
@@ -1523,11 +1125,11 @@ Function GPO-Local
 				    $skip = $false
 				    $name = "GPO-Local: $($item.Name)"
 				    $errorMsg = ""	
-				    # Check if GPO exists in the critical GPO items
-				    If($arrGPO -match $item.name)
+				    # Check if Generic GPO exists in the critical GPO items, the rest will be caught by below check.
+				    If($arrGPOGeneric -match $item.name)
 				    {
 				    	[int]$script:gpoRDSerrorsfound = 1
-				    	$expected = $($arrGPO -match $item.name).Expected
+				    	$expected = $($arrGPOGeneric -match $item.name).Expected
 				    	$gpoResult = ($Expected -eq $($item.state))
 				    	if(-not $gpoResult )
 				    	{
@@ -1535,7 +1137,7 @@ Function GPO-Local
 				    		$errorMsg = "Source GPO: $GPOlocation Expected:"+$Expected+" Actual:"+$($item.state)
 				    	}
 				    }
-				    # Check if GPO exists in RDS area
+				    # Check if GPO exists in RDS area (this also catches all PSM critical ones)
 				    elseif($item.Category -match "Remote Desktop Services")
 				    {
 				    	[int]$script:gpoRDSerrorsfound = 1
@@ -1590,7 +1192,7 @@ Function GPO-Domain
 {
 	[OutputType([PsCustomObject])]
 	param ()
-	[int]$script:gpoRDSerrorsfound = 0
+	# [int]$script:gpoRDSerrorsfound = 0 # shouldn't init this twice, it will overwrite the local one.
 	try{
 		Write-LogMessage -Type Verbose -Msg "Starting GPO-Domain..."
 		$actual = ""	
@@ -1625,18 +1227,32 @@ Function GPO-Domain
 				    $skip = $false
 				    $name = "GPO-Domain: $($item.Name)"
 				    $errorMsg = ""	
-				    # Check if GPO exists in the critical GPO items
-				    If($arrGPO -match $item.name)
+				    # Check if PSM GPO exists in the critical GPO items
+				    If($arrGPOPSM -match $item.name)
 				    {
-				    	[int]$script:gpoRDSerrorsfound = 1
-				    	$expected = $($arrGPO -match $item.name).Expected
+				    	#[int]$script:gpoRDSerrorsfound = 1 # not needed, it won't break RDS
+				    	$expected = $($arrGPOPSM -match $item.name).Expected
 				    	$gpoResult = ($Expected -eq $($item.state))
 				    	if(-not $gpoResult )
 				    	{
 				    		$compatible = $false
 				    		$errorMsg = "Source GPO: $GPOlocation Expected:"+$Expected+" Actual:"+$($item.state)
+							$errorMSgSPecific = "Must remove problematic domain GPOs for PSM sessions to succeed."
 				    	}
 				    }
+					# Check if Generic GPO exists in the critical GPO items
+					ElseIf($arrGPOGeneric -match $item.name)
+					{
+						[int]$script:gpoRDSerrorsfound = 1
+				    	$expected = $($arrGPOGeneric -match $item.name).Expected
+				    	$gpoResult = ($Expected -eq $($item.state))
+				    	if(-not $gpoResult )
+				    	{
+				    		$compatible = $false
+				    		$errorMsg = "Source GPO: $GPOlocation Expected:"+$Expected+" Actual:"+$($item.state)
+							$errorMSgSPecific = "Must remove problematic domain GPOs for RDS installation to succeed."
+				    	}
+					}
 				    else {
 				    	$skip = $true
 				    }
@@ -1656,7 +1272,7 @@ Function GPO-Domain
 		{
 			 $actual = "Domain GPOs found"
 			 $result = $false
-             $errorMsg = "Must remove problematic domain GPOs for PSM sessions to succeed."
+             $errorMsg = $errorMSgSPecific
 		}
 		else
 		{
@@ -3288,7 +2904,7 @@ Function remoteAppDomainUserPermissions()
 		Write-LogMessage -Type Verbose -Msg "Finished remoteAppDomainUserPermissions"
 
 	} catch {
-		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception)"
+		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception) Installing windows user must be a member of `"Domain Users`" group and in the local administrators group (requires logout login to take affect). If the user is from a different domain, this error will not go away, but as a workaround, after PSM is installed, perform the actions described here: https://cyberark.my.site.com/s/article/Publish-PSMInitSession-as-a-RemoteApp-Program"
 	}
 
 	return [PsCustomObject]@{
@@ -5068,8 +4684,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIqRgYJKoZIhvcNAQcCoIIqNzCCKjMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDso4XA7QXq2NCO
-# iBMinHgT+oRK6QHEecc4moA0+IZ5a6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCjLO87kjAS99H+
+# gDqAnJp7CqJTMOuaBqPGOh3PqOV9U6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -5204,22 +4820,22 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEIEwbyypAlVFsJEL0Eu++NwovvDZqMZlo0jobg6sYC0JrMA0GCSqGSIb3
-# DQEBAQUABIICAD4u+yNBbhBZB0cAp8bGY/ydfiUmbXvwixnsTjvKoo3dQnze5Tvx
-# 2K2cLZB04ydgjUlVYc3ia1ZvZ+we95Hs/yyrZWQ0IOYq0GBfcqUEKj2gPLtqynRl
-# Y9I/r0ZtQxMlGBt08PEqQpm29waJg1enGKNT5E83r309mf+0K+AAQz2HJ2WeRzOL
-# ZUX0/XZO2/VfI8IJi2F0oiBlw7l0ZIYqvBThQvbkrcTQS9HtlE3DwdrxKBZzfjPc
-# WCI2OeH+AdFAPlrB+ixV+GXf/vrAe4dQDwSo7nvvG8jZQvvBb+Ehy1wUyziINIlJ
-# mOQSi6Nwz9rVXXZBhe6pef5ecrSuKB5J3HwhTSApNYKd6xbyVFVymE+s0ar8xCTE
-# EhYEJ0Q0nYrsnMBIyR0z4pcsFMfb6WXJi2TrPAiuDfQ0iXHntbUJLn3nu2THOLvb
-# VPvhzuBGQ6z1EJ55uRRbVN1JzFDGV/UpcsefrN62rdOjEbfwkc576kQPSP+D/xXd
-# nCaFPlLeiNad3Xddfyh+hvYsr5fbkOsgUrDfR2GmszhX47yjApl1BLooylmgkVEE
-# h+6cGnOTIMprsxmhXWWfGYxOkZdYrabw0w0kwF8Ce/J8IVWuMS0aFVupumdrYTJu
-# HVQhtK805asjhj/GBKQGha7OWcNUxYLG+ua8r9MuA7nOIxh/fwTsywvHoYIOLDCC
+# AQkEMSIEIO7WhDXyW/SqVsHly4XetU/Oy2fIDQ8fRG80A2Ylg5IAMA0GCSqGSIb3
+# DQEBAQUABIICAKp3r2WVh2G9BBDeAsheIGXL8CTWhdkrF5rQy2EBz+x/53vd7Zoq
+# LMmBdaO3UI60AVICnA4AmiB05u3iFCCMHZBJ7GMNpoJ49c+d+59bTH0sMqoHdifw
+# mINGOcpaKt+0xtYm3MakgecWEHL8wCa/Voc6R0VbTI+VWwvXVAkIYsti++9bl9HY
+# BcINua76LOtnNSq/PUzByHwT3K1mvmOTHF9Z4ejBiPr4Nh1nWV2ZgwBAnYotfwBL
+# NIafbKFU19MU0ZD/fudXTOmmVBIC3iR8Jav56uEw/1vd1yMDHIT5PcrVjdq85aWi
+# xMOHbwv6y3Ynf6OZe2T93J6uvIk+wsNJWyR9ZbqBCzK5G4xet6MbwrFKjjqW9xI2
+# FfvnBKwTfyPAH9HHXJPFwPv0SN4cFrzlhgivCFk1Y5dkfN4Bed+A7fd/W8g3k2f/
+# hPaRKykaWSMlBROU/c1iOoInywhuMQy73V2NOTmmVJXyduk8oMy1omzv2ZDxDERt
+# 8VVf/r5w93V/BfNyKqAVkwzMiCAEsqUbK3yA/209/jrAxN1R4RhNuak2QgsEcT/I
+# YvjfNc/qhPGYpLgUS6zX2TaEBLxOUYQhXjVDRZR83zsZCfPQDlP+cKgIaJHYIpS9
+# JgTM6HOtu+9QHiiWERm2q+B0FIYkQRiaMNs97ETbfQjuKeZ9dDVO1RmcoYIOLDCC
 # DigGCisGAQQBgjcDAwExgg4YMIIOFAYJKoZIhvcNAQcCoIIOBTCCDgECAQMxDTAL
 # BglghkgBZQMEAgEwgf8GCyqGSIb3DQEJEAEEoIHvBIHsMIHpAgEBBgtghkgBhvhF
-# AQcXAzAhMAkGBSsOAwIaBQAEFJAMv5VH3uQ5g/EBsLZJljVnvK5DAhUAkMuUBjKf
-# ElxMWHvqjfL0jsswbegYDzIwMjQwMzIyMDIxMzQ4WjADAgEeoIGGpIGDMIGAMQsw
+# AQcXAzAhMAkGBSsOAwIaBQAEFHo1zCSf4L2KqA9lyThex/8lq0ixAhUA3FXXJJQJ
+# SmZU/YAsW0SZPJtQtPEYDzIwMjQwMzI5MTcyMjQzWjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -5283,13 +4899,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjQwMzIyMDIxMzQ4WjAvBgkqhkiG9w0BCQQxIgQg
-# EyUPqnnZ+HnjygOA4NYamkHkSIeKGUZ+oY5fk4Bl0nowNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjQwMzI5MTcyMjQzWjAvBgkqhkiG9w0BCQQxIgQg
+# bOEPWsTqpxQb+ZqVMsa8zt+xs2NbYZX6oR/hOwRYm7EwNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBAHTzi5XbZmT8A/lubnUMtnavJrmO6lMbl/HqPzM8uJjwlOP6ibJK
-# S4Ayep6t4AXe89NhkWXeHUC3WOutJmCvrL3lARE6YG2dvt6IhO+D8biktuS1GbTI
-# Vv3tkr9K6a4l7d4YZA57uNsSCh7RzMSD95sT2yMCfY+jgw+dFgA/KZuqYyRBDZzw
-# ty44FYHlAX8KeleHLjkLgYK1HUZxxS2dKsnPkPVB2J8GwPlcA4g4pVYtU8Iy78xd
-# ryI4F4qCuf+JtSmsWJgPMoqX201gQxCtIkmgHVmBGwBusvhOppI81X43XqbRrS+N
-# 9igoJ64dMO3cV36tNWQBWTVNnFSuHa2ygKc=
+# hvcNAQEBBIIBAGpWv4VThxrztn5W4ig7lc3ZHlQydB4/bhbJJIvUC7++zUV85stM
+# gWfG/NVHrs+Kfxd9CoHeT1xjT2aLy8F6t5WEFaU5JhQLySMayonzUbTekC2oGgmP
+# /+9a/9AsdKkDJh0Cc5EtS5CBhweJlrNunX8th5S3TXjXcMDcb6iYaYFGWxjSjoQj
+# VPn2yLwxzGiI3wvXbFG//x5uFYs5tFhUi6pDYZw/MbHjtOx4c+eGzf3S264J47Sk
+# hFP6gPWYTBWDi+Lld8gM7m5g9PsL+Iw7229RgOl3CQYhL9hqkx19T6RgwOd3hydp
+# UKHd8N/HCq4uyTB47b/fLVrf0f25wFDdmG8=
 # SIG # End signature block
