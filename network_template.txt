@@ -38,8 +38,8 @@ ocsp.globalsign.com:80
 crl.globalsign.com:80
 secure.globalsign.com:80
 
-Dynamic Privilege Access outbound
-=================================
+Dynamic Privilege Access outbound from the connector server
+===========================================================
 cms-assets-bucket-445444212982.s3.amazonaws.com:443 <---- if you are on US-EAST-1 region (since US east is default by AWS).
 cms-assets-bucket-445444212982-<AWSRegion>.s3.<AWSRegion>.amazonaws.com:443 <---- Other Regions must have region specified.
 <AWSRegion>.bc.be-privilege-access.cyberark.cloud:443
@@ -55,6 +55,8 @@ Dynamic Privilege Access outbound from client (user) machines
 <Subdomain>.oracle.cyberark.cloud:2484
 <Subdomain>.postgres.cyberark.cloud:5432
 <Subdomain>.mssql.cyberark.cloud:1433
+<Subdomain>.db2.cyberark.cloud:50002
+<Subdomain>.mongodb.cyberark.cloud:27017
 <Subdomain>.k8s.cyberark.cloud:443
 
 Dynamic Privilege Access LAN from connector server to target resources
@@ -65,8 +67,10 @@ To Maria DB targets:3306
 To MySQL DB targets:3306
 To Oracle DB targets:2484
 To PostgreSQL DB targets:5432
-To MSSQL DB targets:1433,88,389,464
-To K8S targets:433
+To MSSQL DB targets:1433,(88,389,464 to AD for ZSP)
+To DB2 DB targets:50002
+To MongoDB targets:27017
+To K8S targets:443
 
 Optional Rules
 ===============
@@ -81,3 +85,4 @@ AWS IP Ranges here: https://ip-ranges.amazonaws.com/ip-ranges.json
 
 Customers often ask how to whitelist static IPs of AWS since there are so many and they might change, and we recommend utilizing EDL (External Dynamic List) method, an example of an EDL provider https://docs.paloaltonetworks.com/resources/edl-hosting-service (This is just an example) You're welcome to research about this on google.
 
+Outbound traffic network and port requirements: https://docs.cyberark.com/ispss-deployment/latest/en/Content/Privilege%20Cloud/PrivCloud-sys-req-networks.htm
