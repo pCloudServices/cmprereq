@@ -78,7 +78,7 @@ $arrCheckPrerequisitesOutOfDomain = @("DomainUser","remoteAppDomainUserPermissio
 
 ## List of checks to be performed on every run of the script
 $arrCheckPrerequisitesGeneral = @(
-"VaultConnectivity", #General
+#"VaultConnectivity", #General
 "CustomerPortalConnectivity", #General
 "CheckIdentityCustomURL",
 "OSVersion", #General
@@ -91,10 +91,7 @@ $arrCheckPrerequisitesGeneral = @(
 "MinimumDriveSpace", #General
 "DotNet", #General
 "PendingRestart", #General
-"CheckNoProxy",
-"CheckEndpointProtectionServices", #General
-"GPO-Local", #General + PSM
-"GPO-Domain" #General + PSM
+"CheckEndpointProtectionServices" #General
 )
 
 $arrCheckPrerequisitesSecureTunnel = @(
@@ -106,15 +103,19 @@ $arrCheckPrerequisitesSecureTunnel = @(
 
 
 $arrCheckPrerequisitesPSM = @(
+"VaultConnectivity", # PSM & CPM
 "SQLServerPermissions", #PSM
 "SecondaryLogon", #PSM
-"KUsrInitDELL" #PSM
+"KUsrInitDELL", #PSM
+"GPO-Local", #PSM
+"GPO-Domain", #PSM
+"CheckNoProxy" #PSM
 )
 
 $arrCheckPrerequisitesCPM = @(
 #"CRLConnectivity" #CPM
+"VaultConnectivity" #PSM & CPM
 )
-
 
 $arrCheckPrerequisitesCM = @(
 "ConnectorManagementScripts", #CM
@@ -142,7 +143,17 @@ If ($POC){
     $enforceTLS = $false
 }
 
-$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},<#@{CPM = $arrCheckPrerequisitesCPM},#>@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckPrerequisitesCM},@{DPA = $arrCheckPrerequisitesDPA}
+#all
+$arrCheckPrerequisites = @{General = $arrCheckPrerequisitesGeneral},@{CPM = $arrCheckPrerequisitesCPM},@{PSM = $arrCheckPrerequisitesPSM},@{SecureTunnel = $arrCheckPrerequisitesSecureTunnel},@{ConnectorManagement = $arrCheckPrerequisitesCM},@{DPA = $arrCheckPrerequisitesDPA}
+
+$componentMapping = @{
+    "SIA - Secure Infrastructure Access (DPA)" = $arrCheckPrerequisitesDPA
+    "CM - Connector Management" = $arrCheckPrerequisitesCM
+    "PSM - Privilege Session Manager" = $arrCheckPrerequisitesPSM
+    "CPM - Central Policy Manager" = $arrCheckPrerequisitesCPM
+    "ST - Secure Tunnel (Legacy HTML5, SIEM)" = $arrCheckPrerequisitesSecureTunnel
+}
+
 
 
 ## List of GPOs to check
@@ -170,7 +181,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "32"
+[int]$versionNumber = "33"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -223,7 +234,7 @@ Function Show-Menu{
     Clear-Host
     Write-Host "================ Troubleshooting Guide ================"
     
-    Write-Host "1: Press '1' to Disable IPv6" -ForegroundColor Green
+    Write-Host "1: Press '1' to Disable IPv6 (Legacy)" -ForegroundColor Green
     Write-Host "2: Press '2' to Enable SecondaryLogon Service" -ForegroundColor Green
     Write-Host "3: Press '3' to Run CPM Install Connection Test" -ForegroundColor Green
     Write-Host "4: Press '4' to Retry Install RDS" -ForegroundColor Green
@@ -3606,6 +3617,146 @@ Function Get-Choice{
     return $result
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Get-MultipleChoice
+# Description....: Prompts user for Selection choice (supports multiple selections, with "All" selection functionality)
+# Parameters.....: None
+# Return Values..: 
+# =================================================================================================================================
+Function Get-MultipleChoice {
+    [CmdletBinding()]
+    Param
+    (
+        [Parameter(Mandatory = $true, Position = 0)]
+        $Title,
+
+        [Parameter(Mandatory = $true, Position = 1)]
+        [String[]] $Options,
+
+        [Parameter(Position = 2)]
+        $DefaultChoice = @()
+    )
+
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    [System.Windows.Forms.Application]::EnableVisualStyles()
+    $script:result = @()
+    $form = New-Object System.Windows.Forms.Form
+    $form.FormBorderStyle = [Windows.Forms.FormBorderStyle]::FixedDialog
+    $form.BackColor = [Drawing.Color]::White
+    $form.TopMost = $True
+    $form.Text = $Title
+    $form.ControlBox = $False
+    $form.StartPosition = [Windows.Forms.FormStartPosition]::CenterScreen
+
+    # Set form size
+    $minFormWidth = 300
+    $formHeight = 100 + ($Options.Count * 30)
+    $form.ClientSize = New-Object System.Drawing.Size($minFormWidth, $formHeight)
+
+    $checkboxes = @{}
+    $eventHandlingEnabled = $true
+
+    Function Toggle-AllCheckboxes {
+        param($state)
+        $eventHandlingEnabled = $false  
+        foreach ($key in $checkboxes.Keys) {
+            if ($key -ne "All") {
+                $checkboxes[$key].Checked = $state
+            }
+        }
+        $eventHandlingEnabled = $true
+    }
+
+    Function Check-AllState {
+        if ($eventHandlingEnabled) {
+            $allChecked = $true
+            foreach ($key in $checkboxes.Keys) {
+                if ($key -ne "All" -and !$checkboxes[$key].Checked) {
+                    $allChecked = $false
+                    break
+                }
+            }
+            $eventHandlingEnabled = $false
+            $checkboxes["All"].Checked = $allChecked
+            $eventHandlingEnabled = $true
+        }
+    }
+
+    # Create CheckBoxes for every option
+    $index = 0
+    foreach ($option in $Options) {
+        $checkbox = New-Object System.Windows.Forms.CheckBox
+        $checkbox.Text = $option
+        $checkbox.Location = New-Object System.Drawing.Point(20, (20 + ($index * 30)))
+        $checkbox.Size = New-Object System.Drawing.Size(250, 30)
+
+        $checkboxes[$option] = $checkbox
+
+        if ($option -eq "All") {
+            $checkbox.Add_CheckedChanged({
+                if ($eventHandlingEnabled) {
+                    if ($checkboxes["All"].Checked) {
+                        Toggle-AllCheckboxes $true
+                    } else {
+                        Toggle-AllCheckboxes $false
+                    }
+                }
+            })
+        } else {
+            $checkbox.Add_CheckedChanged({
+                if ($eventHandlingEnabled) {
+                    if (-not $checkbox.Checked) {
+                        $eventHandlingEnabled = $false
+                        $checkboxes["All"].Checked = $false
+                        $eventHandlingEnabled = $true
+                    } else {
+                        Check-AllState
+                    }
+                }
+            })
+        }
+
+        # Add checkboxes to form controls
+        $form.Controls.Add($checkbox)
+        $index++
+    }
+
+    # After all checkboxes are added, set the default choices
+    $index = 0
+    foreach ($option in $Options) {
+        # Handle "All" checkbox separately
+        if ($DefaultChoice -contains 0 -and $option -eq "All") {
+            $checkboxes["All"].Checked = $true
+            Toggle-AllCheckboxes $true
+        }
+        elseif ($DefaultChoice -contains $index -and $option -ne "All") {
+            $checkboxes[$option].Checked = $true
+        }
+        $index++
+    }
+
+    # Submit Button
+    $submitButton = New-Object System.Windows.Forms.Button
+    $submitButton.Text = "Submit"
+    $submitButton.Size = New-Object System.Drawing.Size(80, 30)
+    $submitButton.Location = New-Object System.Drawing.Point(100, ($formHeight - 50))
+    $submitButton.Add_Click({
+        foreach ($control in $form.Controls) {
+            if ($control -is [System.Windows.Forms.CheckBox] -and $control.Checked) {
+                $script:result += $control.Text
+            }
+        }
+        $form.Close()
+    })
+    $form.Controls.Add($submitButton)
+
+    # Show form
+    [void]$form.ShowDialog()
+
+    return $result
+}
+
 Function Get-IdentityURL($idURL) {
     Add-Type -AssemblyName System.Net.Http
 
@@ -3915,9 +4066,9 @@ param
 	# Config File
 	[Parameter(ParameterSetName='File',Mandatory=$true)]
 	[ValidateScript({Test-Path $_})]
-	[String]$ConfigFile
-    
+	[String]$ConfigFile  
  )
+
 	 If([string]::IsNullOrEmpty($ConfigFile))
 	 {
         # ------ Copy parameter values entered ------
@@ -3938,6 +4089,8 @@ param
             $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.com"
         }Elseif($PortalURL -like "*.cyberark.cloud*"){
             # ispss
+            $script:testComponents = Get-MultipleChoice -Title "Select Components To Test" -Options "All","SIA - Secure Infrastructure Access (DPA)","CM - Connector Management","PSM - Privilege Session Manager","CPM - Central Policy Manager","ST - Secure Tunnel (Legacy HTML5, SIEM)" -DefaultChoice @(1,2)
+            Write-Host "Selected:`n$($testComponents -join "`n")"
             $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.cloud"
             $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.cloud"
         }Elseif($portalSubDomainURL -eq $null){
@@ -3949,6 +4102,7 @@ param
 			PortalURL = $PortalURL.Trim()
 			VaultIP = $VaultIP.trim()
 			TunnelIP = $TunnelIP.trim()
+            testComponents = $testComponents.trim()
 		}
 		$parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
         # deal with ispss
@@ -3960,6 +4114,7 @@ param
 		$script:TunnelIP = $parameters.TunnelIP
 		$script:PortalURL = $parameters.PortalURL
         $script:LastSuccessfulCPMPassDate = $parameters.LastSuccessfulCPMPassDate
+        $script:testComponents = $parameters.testComponents
         # deal with ispss
         if($PortalURL -like "*.privilegecloud.cyberark.com"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
@@ -3968,7 +4123,6 @@ param
     Write-LogMessage -Type Info -SubHeader -Msg "Privilege Cloud Tenant Details:"
     Write-LogMessage -type Success -MSG "Portal: $PortalURL"
     Write-LogMessage -type Success -MSG "Vault:  $VaultIP"
-    Write-LogMessage -type Success -MSG "Tunnel: $TunnelIP"
 
     # Check when was last time CPMConnectionTest ran, we want this to be fresh atleast 3 days before install date.
     if($parameters.LastSuccessfulCPMPassDate)
@@ -4065,105 +4219,147 @@ Function AddLineToReport($action, $resultObject)
     }
 }
  
-Function CheckPrerequisites()
-{
-
-	Try
-	{
-        $cnt = ($arrCheckPrerequisites.Values[0]+$arrCheckPrerequisites.Values[1]+$arrCheckPrerequisites.Values[2]+$arrCheckPrerequisites.Values[3]+$arrCheckPrerequisites.Values[4]+$arrCheckPrerequisites.Values[5]).Count
-		Write-LogMessage -Type Info -SubHeader -Msg "Starting checking $cnt prerequisites..."
-		
+Function CheckPrerequisites {
+    Param (
+        [String[]]$selectedComponents
+    )
+    
+    Try {
         $global:table = @()
         $errorCnt = 0
         $warnCnt = 0
         $table = ""
 
-		ForEach ($methods in $arrCheckPrerequisites)
-        {
-            Write-LogMessage -Type Warning -Msg "< $($methods.Keys) Related Checks >"
-            ForEach($method in $($methods.Values))
-            {
-                Try
-                { 
-                    Write-Progress -Activity "Checking $method..."
-                    $resultObject = &$method  
+        #track if VaultConnectivity has already been run
+        $vaultConnectivityExecuted = $false
 
-                    if($null -eq $resultObject -or !$resultObject.result)
-                    {
-                        $errorCnt++
-                    }
+        #general checks
+        Write-LogMessage -Type Warning -Msg "< General Related Checks >"
+        foreach ($method in $arrCheckPrerequisitesGeneral) {
+            Try {
+                Write-Progress -Activity "Checking $method..."
+                $resultObject = &$method
 
-                    Write-Progress -Activity "$method completed" -Completed      
-                }
-                Catch
-                {
-                    $resultObject.errorMsg = $_.Exception.Message
+                if ($null -eq $resultObject -or !$resultObject.result) {
                     $errorCnt++
                 }
 
-			    if($resultObject.errorMsg -ne $g_SKIP)
-			    {
-			    	AddLineToReport $method $resultObject
-			    }
-			    else
-			    {
-			    	# remove the skip description
-			    	$resultObject.errorMsg = ""
-			    }
-			    
-                AddLineToTable $method $resultObject
+                Write-Progress -Activity "$method completed" -Completed
+            }
+            Catch {
+                $resultObject.errorMsg = $_.Exception.Message
+                $errorCnt++
+            }
+
+            if ($resultObject.errorMsg -ne $g_SKIP) {
+                AddLineToReport $method $resultObject
+            } else {
+                $resultObject.errorMsg = ""
+            }
+
+            AddLineToTable $method $resultObject
+        }
+
+        #Specific checks
+        foreach ($component in $selectedComponents) {
+            if ($component -ne "All") {
+                $arrToCheck = $componentMapping[$component]
+                
+                if ($arrToCheck -ne $null) {
+                    Write-LogMessage -Type Warning -Msg "< $component Related Checks >"
+                    
+                    foreach ($method in $arrToCheck) {
+
+                        if ($method -eq "VaultConnectivity" -and $vaultConnectivityExecuted) {
+                            continue  #Skip the check
+                        }
+
+                        Try {
+                            Write-Progress -Activity "Checking $method..."
+                            $resultObject = &$method  
+
+                            if ($null -eq $resultObject -or !$resultObject.result) {
+                                $errorCnt++
+                            }
+
+                            Write-Progress -Activity "$method completed" -Completed
+                        }
+                        Catch {
+                            $resultObject.errorMsg = $_.Exception.Message
+                            $errorCnt++
+                        }
+
+                        if ($resultObject.errorMsg -ne $g_SKIP) {
+                            AddLineToReport $method $resultObject
+                        } else {
+                            $resultObject.errorMsg = ""
+                        }
+
+                        AddLineToTable $method $resultObject
+
+                        #if VaultConnectivity has been executed
+                        if ($method -eq "VaultConnectivity") {
+                            $vaultConnectivityExecuted = $true
+                        }
+                    }
+                }
+            } else {
+                #run all checks
+                foreach ($methods in $arrCheckPrerequisites.Values) {
+                    foreach ($method in $methods) {
+
+                        if ($method -eq "VaultConnectivity" -and $vaultConnectivityExecuted) {
+                            continue  #Skip the check
+                        }
+
+                        Try {
+                            Write-Progress -Activity "Checking $method..."
+                            $resultObject = &$method
+
+                            if ($null -eq $resultObject -or !$resultObject.result) {
+                                $errorCnt++
+                            }
+
+                            Write-Progress -Activity "$method completed" -Completed
+                        }
+                        Catch {
+                            $resultObject.errorMsg = $_.Exception.Message
+                            $errorCnt++
+                        }
+
+                        if ($resultObject.errorMsg -ne $g_SKIP) {
+                            AddLineToReport $method $resultObject
+                        } else {
+                            $resultObject.errorMsg = ""
+                        }
+
+                        AddLineToTable $method $resultObject
+
+                        #if VaultConnectivity has been executed
+                        if ($method -eq "VaultConnectivity") {
+                            $vaultConnectivityExecuted = $true
+                        }
+                    }
+                }
             }
         }
-        
-        Write-LogMessage -Type Info -Msg " " -Footer
-		
-        $errorStr = "";
-        $warnStr = "";
 
-
-        if($global:table.Count -gt 0)
-        {       
-            if($errorCnt -eq 1)
-			{
-				$errorStr = "failure"
-			}
-			else
-			{
-				$errorStr = "failures"
-			}
-
-			$warnCnt = $global:table.Count - $errorCnt
-
-			if($warnCnt -eq 1)
-			{
-				$warnStr = "warning"
-			}
-			else
-			{
-				$warnStr = "warnings"
-			}
-
-
-			Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr"
-
+        # Final logging of errors and warnings
+        if ($global:table.Count -gt 0) {
+            $warnCnt = $global:table.Count - $errorCnt
+            Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt failures and $warnCnt warnings."
             Write-LogMessage -Type Info -Msg "$SEPARATE_LINE"
             $global:table | Format-Table -Wrap
-            #$global:table | Format-Table -Wrap -AutoSize
-
             Write-LogMessage -Type LogOnly -Msg $($global:table | Out-String)
-        }
-        else
-        {
+        } else {
             Write-LogMessage -Type Success -Msg "Checking Prerequisites completed successfully"
         }
-
-        Write-LogMessage -Type Info -Msg " " -Footer
-	}
-	Catch
-	{
-        Throw $(New-Object System.Exception ("CheckPrerequisites: Failed to run CheckPrerequisites",$_.Exception))
-	}
+    }
+    Catch {
+        Throw $(New-Object System.Exception("CheckPrerequisites: Failed to run CheckPrerequisites", $_.Exception))
+    }
 }
+
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Test-VersionUpdate
@@ -4459,22 +4655,22 @@ Function Get-LogoHeader {
 "@
 
     for ($i=0; $i -lt $t.Length; $i++) {
-        $c = "white"  # Default color
+        $c = "black"  # Default color
 
         if ($i % 2 -eq 0) {
             $c = "red"
         }
         elseif ($i % 3 -eq 0) {
-            $c = "yellow"
+            $c = "green"
         }
         elseif ($i % 5 -eq 0) {
-            $c = "yellow"
+            $c = "black"
         }
         elseif ($i % 7 -eq 0) {
-            $c = "red"
+            $c = "green"
         }
         elseif ($i % 11 -eq 0) {
-            $c = "yellow"
+            $c = "green"
         }
         elseif ($i % 13 -eq 0) {
             $c = "red"
@@ -4606,7 +4802,7 @@ else
         if($enforceTLS -eq $true){enforceTLS}
 
         # Main Pre-requisites check
-		CheckPrerequisites
+		CheckPrerequisites -selectedComponents $testComponents
 
         # Install RDS on the Initial Run
         checkIfPSMisRequired
@@ -4650,10 +4846,10 @@ else
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 #########################
 # SIG # Begin signature block
-# MIIqVgYJKoZIhvcNAQcCoIIqRzCCKkMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIxtQYJKoZIhvcNAQcCoIIxpjCCMaICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCCcCgr/FU0wbAa
-# ght9BdjntLAJ+CHDgGFHTjxNAsGLa6CCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCmoCH3BP+PU9wc
+# tt2rTJytzOzbiUgmb35fySpcEEqEmqCCGFcwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -4783,97 +4979,137 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # oZ6wZE9s0guXjXwwWfgQ9BSrEHnVIyKEhzKq7r7eo6VyjwOzLXLSALQdzH66cNk+
 # w3yT6uG543Ydes+QAnZuwQl3tp0/LjbcUpsDttEI5zp1Y4UfU4YA18QbRGPD1F9y
 # wjzg6QqlDtFeV2kohxa5pgyV9jOyX4/x0mu74qADxWHsZNVvlRLMUZ4zI4y3KvX8
-# vZsjJFVKIsvyCgyXgNMM5Z4xghFVMIIRUQIBATBsMFwxCzAJBgNVBAYTAkJFMRkw
+# vZsjJFVKIsvyCgyXgNMM5Z4xghi0MIIYsAIBATBsMFwxCzAJBgNVBAYTAkJFMRkw
 # FwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTIwMAYDVQQDEylHbG9iYWxTaWduIEdD
 # QyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0EgMjAyMAIMcE3E/BY6leBdVXwMMA0GCWCG
 # SAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIBDDECMAAwGQYJKoZIhvcNAQkDMQwGCisG
 # AQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEOMAwGCisGAQQBgjcCARUwLwYJKoZIhvcN
-# AQkEMSIEID3uVPeUr6G2aPffpDxUqWdxyc9PSWgOtk1pzYR7DeaFMA0GCSqGSIb3
-# DQEBAQUABIICAABu15R/AcxDkFp5PaaQsAgT3b9TtH+JTU7rkmpUldMgrT3yO40/
-# l2+Gi0d5I63gj6po26jfpTZnGdN6djvpwEbsMNDHBK5RFYnfZYQ6/2BeKImN+h2P
-# KXvldbw+urdHcPmwU2UspQP75B9cKySrFuKp1vzfxxCklDgXnOn0MffdbudfL/+a
-# x+291M+b6GIKxTUTDLs0oU25GMFzFE5WDn32IvOpgR4WtQ0vYrTB7aqIyM38WBnk
-# fY0RPoXQBphPv+0jqZPieAa2IAQYLK4k13bMEqX/VFHaBYgO646seM3UReva2AB6
-# wGQ7gQ4sKFviY/Sje2MZLB03pt7PcfNVz4rwO50EOqALL+W/gCucr0hTR6JmoVSf
-# HBtBS+zsYAWDeafnM4jus+A6RD811Fp5yUZ8QAT4XfNkqW1rOGL1a2TgAtccdgo0
-# P3PHOBTn6d3xaplA7HRj3UnlyCCyYBLrP1lAjUKxTHUHwjONsXBEJjtgYDlki6ij
-# pSaZqVXtXQf35KL03LExS5HWWHM4pKhgi3tch1GicvmNXI/QxgAIayaEc7Tj1z8a
-# Hk1hDhy/5OKg07BnrniLjRGZ3r9R+7hdlFWNB+7hszQQftA0CNtjico6cuubj7kH
-# MCDEmmpR/dNTNAs2dyBc9baD5HH4RndfjAuuSCvKoda8xNa2zi/P5pLvoYIOPDCC
-# DjgGCisGAQQBgjcDAwExgg4oMIIOJAYJKoZIhvcNAQcCoIIOFTCCDhECAQMxDTAL
-# BglghkgBZQMEAgEwggEOBgsqhkiG9w0BCRABBKCB/gSB+zCB+AIBAQYLYIZIAYb4
-# RQEHFwMwMTANBglghkgBZQMEAgEFAAQgd3WGFWPwfQsvHWHLduAyg5WT7wknYaJb
-# fOiLrIKLu3ECFDs1hzQaCy2VFiGBX4Roqh940uQdGA8yMDI0MDcyNDExMDMxMFow
-# AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
-# cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
-# VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
-# izCCBTgwggQgoAMCAQICEHsFsdRJaFFE98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAw
-# gb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5WZXJpU2lnbiwgSW5jLjEfMB0GA1UE
-# CxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29yazE6MDgGA1UECxMxKGMpIDIwMDggVmVy
-# aVNpZ24sIEluYy4gLSBGb3IgYXV0aG9yaXplZCB1c2Ugb25seTE4MDYGA1UEAxMv
-# VmVyaVNpZ24gVW5pdmVyc2FsIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkw
-# HhcNMTYwMTEyMDAwMDAwWhcNMzEwMTExMjM1OTU5WjB3MQswCQYDVQQGEwJVUzEd
-# MBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVj
-# IFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3Rh
-# bXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+d
-# jHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAyl2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4
-# Yht+66YH4t5/Xm1AONSRBudBfHkcy8utG7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt
-# 7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9IThxNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/
-# yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+vJJXcnf0zajM/gn1kze+lYhqxdz0sUvU
-# zugJkV+1hHk1inisGTKPI8EyQRtZDqk+scz51ivvt9jk1R1tETqS9pPJnONI7rtT
-# DtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/
-# BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUH
-# AgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBz
-# Oi8vZC5zeW1jYi5jb20vcnBhMC4GCCsGAQUFBwEBBCIwIDAeBggrBgEFBQcwAYYS
-# aHR0cDovL3Muc3ltY2QuY29tMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5
-# bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5jcmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgw
-# KAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0O
-# BBYEFK9j1sqjToVy4Ke8QfMpojh/gHViMB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC
-# 6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUAA4IBAQB16rAt1TQZXDJF/g7h1E+meMFv
-# 1+rd3E/zociBiPenjxXmQCmt5l30otlWZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9
-# HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQY0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NX
-# QZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72a433Snq+8839A9fZ9gOoD+NT9wp17MZ1
-# LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnjOgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g
-# /idtFDL8P5dA4b+ZidvkORS92uTTw+orWrOVWFUEfcea7CMDjYUq0v+uqWGBMIIF
-# SzCCBDOgAwIBAgIQe9Tlr7rMBz+hASMEIkFNEjANBgkqhkiG9w0BAQsFADB3MQsw
-# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
-# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNI
-# QTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1
-# OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0
-# aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhT
-# eW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczMIIBIjANBgkq
-# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQ
-# nP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRok
-# KPgbclE9yAmIJgg6+fpDI3VHcAyzX1uPCB1ySFdlTa8CPED39N0yOJM/5Sym81kj
-# y4DeE035EMmqChhsVWFX0fECLMS1q/JsI9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS
-# 41dsIr9Vf2/KBqs/SrcidmXs7DbylpWBJiz9u5iqATjTryVAmwlT8ClXhVhe6oVI
-# QSGH5d600yaye0BTWHmOUjEGTZQDRcTOPAPstwDyOiLFtG/l77CKmwIDAQABo4IB
-# xzCCAcMwDAYDVR0TAQH/BAIwADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEww
-# IwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwIC
-# MBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0
-# dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY3JsMBYG
-# A1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4GA1UdDwEB/wQEAwIHgDB3BggrBgEFBQcB
-# AQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6Ly90cy1vY3NwLndzLnN5bWFudGVjLmNv
-# bTA7BggrBgEFBQcwAoYvaHR0cDovL3RzLWFpYS53cy5zeW1hbnRlYy5jb20vc2hh
-# MjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFt
-# cC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamfhcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQY
-# MBaAFK9j1sqjToVy4Ke8QfMpojh/gHViMA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/w
-# uKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s7
-# 02K/SpQV5oLbilRt/yj+Z89xP+YzCdmiWRD0Hkr+Zcze1GvjUil1AEorpczLm+ip
-# Tfe0F1mSQcO3P4bm9sB/RDxGXBda46Q71Wkm1SF94YBnfmKst04uFZrlnCOvWxHq
-# calB+Q15OKmhDc+0sdo+mnrHIsV0zd9HCYbE/JElshuW6YUI6N3qdGBuYKVWeg3I
-# RFjc5vlIFJ7lv94AvXexmBRyFCTfxxEsHwA/w0sUxmcczB4Go5BfXFSLPuMzW4IP
-# xbeGAk5xn+lmRT92MYICWjCCAlYCAQEwgYswdzELMAkGA1UEBhMCVVMxHTAbBgNV
-# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
-# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
-# IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
-# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTI0MDcyNDExMDMxMFow
-# LwYJKoZIhvcNAQkEMSIEILpbDjuQvIZg5G3h3F/emKwaha+E8TQkAkXp6CL8xFbG
-# MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
-# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQBr8BKoNi5BZP0VwVAb4emjw7QjECGR
-# B9vuF3wQvwz9TWJFqu46eqaxg2FfzKcfF//3Iv2Lg7qP/C66JCbB9pzjLW9JHprI
-# EuVJBTOWQt4SDwyw7y19K+Lc2iome6wxszzgvZmj7Zo8of9WGBDxpImvlcqHucCE
-# ZnoHB5NI70aVjDXliH05fJkaND6G0nzhvjKULRLcl9OWnjSVKB1MP4QYss1+NeCd
-# mk9Usbj6/CfDJc/NlEH/EQ+6SzyzZtXFkuqJKKLS1ItYVYW+iE8b9qCqwahMgGlE
-# 6SAdiWYhHkz/T4L+QL9ajPlCBns5W0dPgPvpmMNDMz6ExIyXnFxripEc
+# AQkEMSIEIGqK3eg451Xto8yqWLKJRhcByK7+mWqAL3TVHLnppQl/MA0GCSqGSIb3
+# DQEBAQUABIICAA+4IPGhJCaX0sHdIaYQiRTRo2t6Veb84Fc0YyyaQ7zWv8VGawS3
+# xtAv4y7OIgQxoYXqx75pZiERm1k59joPMJesdULywooBAA/9zV2bN7y8fjcI28KC
+# 5iq2Y2J9+5ZBZpBid0APA5Edjm2LxzvTy84vHq/rApJzYhfkBC9I6+Z4omsT8/fJ
+# Xi6qb4g7l6n0oy5d9eexlDeDr4q3btcisKMR/tCh5f5YFlPiGYhjgfg0LH2LirEP
+# cCrgaBCE4rK6QxhDM0TBQj3XwwJObsiU8OtCNoxfEOShjL6XI5YxogN8neEddM2g
+# vn+ISHErwD6/lIQvLS3cjazQhOQ/DI7zT7hkvdibr9oyTQ5JyBrpWSzLk7mzzlp8
+# qn6huuOSlCIIkOezdZ1+imzGqdWo2+T1mRpUy1xlwVHwXmyewvhbWdR26XHqDtwX
+# QymOSr2ly5dXufc+FBuNBE6rG8eNY25RvmvRSyg787OG9kW7A7m/P+C1upvZmz0T
+# d6RQyyJERqxLA6YMaAbwOS2HC7HpZt5CT92X1SP0/nX+GVP5lk5UlvGkU5os+O88
+# tA3s8pRtfFBVH7lGhf8CNuxp11geEZn75trrGA8+YeEqkqD0nJC88hah6AeSFcDy
+# 1G//+0uiFiNKZUgHk+u52yc82h+0g36ur8dWXB5cLbv1yBo6k3biPGTvoYIVmzCC
+# FZcGCisGAQQBgjcDAwExghWHMIIVgwYJKoZIhvcNAQcCoIIVdDCCFXACAQMxDTAL
+# BglghkgBZQMEAgEwgeoGCyqGSIb3DQEJEAEEoIHaBIHXMIHUAgEBBgorBgEEAaAy
+# AR8EMDEwDQYJYIZIAWUDBAIBBQAEIKpzLD9WySub5Gi6vev5IJ7ZZGZgk83qgkV1
+# uXwjmppDAhRXDrEeH8qrl/Oi8E5/E6PCmvnL0hgPMjAyNDEwMDMxNTI5MTNaMAMC
+# AQGgZKRiMGAxNjA0BgNVBAMMLUdsb2JhbHNpZ24gVFNBIGZvciBBQVRMIC0gU0hB
+# MjU2IC0gRzQgLSBSMjAyMzEZMBcGA1UECgwQR2xvYmFsU2lnbiBudi1zYTELMAkG
+# A1UEBhMCQkWgghGwMIIFzzCCA7egAwIBAgIMLMYaRpr1hHbBI9e7MA0GCSqGSIb3
+# DQEBDAUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNh
+# MS0wKwYDVQQDEyRHbG9iYWxTaWduIENBIGZvciBBQVRMIC0gU0hBMzg0IC0gRzQw
+# HhcNMjMxMjI1MDAwMDAwWhcNMzQxMjEwMDAwMDAwWjBgMTYwNAYDVQQDDC1HbG9i
+# YWxzaWduIFRTQSBmb3IgQUFUTCAtIFNIQTI1NiAtIEc0IC0gUjIwMjMxGTAXBgNV
+# BAoMEEdsb2JhbFNpZ24gbnYtc2ExCzAJBgNVBAYTAkJFMIIBIjANBgkqhkiG9w0B
+# AQEFAAOCAQ8AMIIBCgKCAQEAv+0ooKkbhlY5xVzRfYnoOXYpy6KF+AowDVEYoTGt
+# K+efUmIcu4xJ2mox95oLVHPuNlZXi1a6HENGzBGGxs4NPRpHlvv3lnScS/rhT0TB
+# X33NvTNm5CrdCmV+hTe/zqVjvmIgz+oSAAiJqgnMlUQdGFJHOMzBBUD13hxOVisc
+# Fb+YaqDLjm80m4Yqq0kayLKLcPfgzdE6JKP3ncgsxRgUCf39R2z0K1AX5dbypD3s
+# WwrFTFvlhzJpkzj1dm1P9/hJva8QNdFhczB7khgSju1lI99EtVh3WHvrEllAytzR
+# TBxoZ+pODvDiwSvawoR3PM1/svQX10jt0mhgEzBK8/m6ewIDAQABo4IBkDCCAYww
+# DgYDVR0PAQH/BAQDAgeAMEwGA1UdIARFMEMwQQYJKwYBBAGgMgEfMDQwMgYIKwYB
+# BQUHAgEWJmh0dHBzOi8vd3d3Lmdsb2JhbHNpZ24uY29tL3JlcG9zaXRvcnkvMAkG
+# A1UdEwQCMAAwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwPgYDVR0fBDcwNTAzoDGg
+# L4YtaHR0cDovL2NybC5nbG9iYWxzaWduLmNvbS9jYS9nc2FhdGxzaGEyZzQuY3Js
+# MIGIBggrBgEFBQcBAQR8MHowQAYIKwYBBQUHMAKGNGh0dHA6Ly9zZWN1cmUuZ2xv
+# YmFsc2lnbi5jb20vY2FjZXJ0L2dzYWF0bHNoYTJnNC5jcnQwNgYIKwYBBQUHMAGG
+# Kmh0dHA6Ly9vY3NwLmdsb2JhbHNpZ24uY29tL2NhL2dzYWF0bHNoYTJnNDAfBgNV
+# HSMEGDAWgBSJ73Vxel9HG5cj3JBKy//AJjYI1TAdBgNVHQ4EFgQURxOO9nEwGV+V
+# s+iVkhJ2LkLVOYUwDQYJKoZIhvcNAQEMBQADggIBAFFqO5HaoO9HUrhZBdPl8ORd
+# GFhaqzmTkGjs43eu4UylVU8dhYzTCVeTnJZ27070Yqv/y9lVtNGAzptHNLsBR4WN
+# nKz01469vk/s+X+/Wrs8WEDJiz6V46Q7PTG871pFMxxAMW7pujHZNBRb7Oqs/EV8
+# wyCefp6Ck9PDkteVNJYq1qwhSQjTHU1SajkZdo7h1qp8glRD+pM0hb6JTaq8UbVc
+# TXHpAz1rZpod+kOiPGij1q8Kb4YdlQjza9Kk92PrpudUuRiNkQMzKHZYwO5CMy8n
+# Kl53wqKWj2/rFRh/nmTI8Z9SZKEYnsOTuhpEDPC8fWJmikMZ30YhCBMujRouovuq
+# 4RxJC8bi4vCESPWywJlPXL9lga9QJxms75LOFyYqvg3Sh8MyK0H0Q2Da+6+U5VEM
+# OPvJvbstREM2uRpfWnQhVi1u0NnHhE9dGB4J2Yxv4X3GCP4D+lxaYeC45kO+UlEd
+# amhClI99GuoQKYkXV/v9gInLm60VOKZ5GzUeYUF0ab9//lAsxdk0eRqsccQna1Se
+# 5XIUsZkiGWZjqEy8NxUFXt2bMzKhkL3EtZP3pDhJz713/ylfbJyvmTuG4tfxwMaU
+# yJl0irA1UKGJOfCjoa/hcklWD1stmi66Vhxra/10usPNoJEp8uMjx7oDQTDF4wuh
+# MAJ8FdrSfsm1RQbmdfIOMIIGUjCCBDqgAwIBAgINAenYpKYtKygROYKpTTANBgkq
+# hkiG9w0BAQwFADBMMSAwHgYDVQQLExdHbG9iYWxTaWduIFJvb3QgQ0EgLSBSNjET
+# MBEGA1UEChMKR2xvYmFsU2lnbjETMBEGA1UEAxMKR2xvYmFsU2lnbjAeFw0xODA0
+# MTgwMDAwMDBaFw0zNDEyMTAwMDAwMDBaMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
+# ExBHbG9iYWxTaWduIG52LXNhMS0wKwYDVQQDEyRHbG9iYWxTaWduIENBIGZvciBB
+# QVRMIC0gU0hBMzg0IC0gRzQwggIiMA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoIC
+# AQCvcD3GkMoJwy76jKZWuyMoHz9kjGDbV5td/aJzH6qHqGwOTlD+cfYpd0HYP021
+# 757wOkwueD1yniqcsDY08CqVDuUPOB9H5R5TLWQ0VKYLqjphqap+mKTRGmQyl50O
+# Kk46S+Y+76/cZGVnImX7zTmzODpJBC4xhjodNO01HboRS2M+cuLWnZTWmF0iGxp3
+# Gj1AfkTUA4TV/vaBCuTO+LrM6MjXy3D7/x+MQtnpniplgDWJvEX503rUIfqfXRxw
+# e2dLHASiHOZI63INsxUNoa3dMHfmEmYXNIn2wxRJru6/ZHhS8aT9+4xJS7eukjz7
+# PkcAgYT9TL104vDVOi3A1VeGkiZN5J1AG8F/zIHX4H6JAQUZG1sNCNXMC70Xg8CC
+# oShWzLeojG/wkEEFLgbRaqpN0fs76HO6V7OUyPdCZw9/LRRy011w+GmkGdoe6F38
+# 9oPtw+jDeOjJcCkJflhgQtgY+CjCD9uMDDzA7J1WM5kgZyxAcqB6DJ6NrSgaaMnL
+# eGijZeOXUpw1SSXT17G4dUjQA1iYbHPEHv1LUz1ah6WwCBi8aE74zqE3gRKYV8yg
+# PhFIpr/vJz4ZSUKcaHExOukkfsDSKwySOyiGk+x3YFvMOrcV3AVf7+uSN5N6Zws4
+# e6zX1anmx8XRin2KwvTEDD0oxZQYQPMbQKrlpu71PcNFKwIDAQABo4IBJjCCASIw
+# DgYDVR0PAQH/BAQDAgGGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFInvdXF6
+# X0cblyPckErL/8AmNgjVMB8GA1UdIwQYMBaAFK5sBaOTE+Ki5+LXHNbH8H/IZ1Og
+# MD4GCCsGAQUFBwEBBDIwMDAuBggrBgEFBQcwAYYiaHR0cDovL29jc3AyLmdsb2Jh
+# bHNpZ24uY29tL3Jvb3RyNjA2BgNVHR8ELzAtMCugKaAnhiVodHRwOi8vY3JsLmds
+# b2JhbHNpZ24uY29tL3Jvb3QtcjYuY3JsMEcGA1UdIARAMD4wPAYEVR0gADA0MDIG
+# CCsGAQUFBwIBFiZodHRwczovL3d3dy5nbG9iYWxzaWduLmNvbS9yZXBvc2l0b3J5
+# LzANBgkqhkiG9w0BAQwFAAOCAgEAPNOVRXNenNevDd11a4NdldtLhsOxP9Xn4GY8
+# RuYhZw4Iae7l4C7hTjZSi8R3Cbci2DSFtKOjPUw9TJHH4WBIqJxnOXNDIqyEVK7c
+# iLiMnKOGbZsVt9v/zAHBCFcOHyOTXebOdthV3iIi6twleNSlwh66izJ7CgKCk1YZ
+# RQx/TdHELW6a3rnYvLcjggSxkoLzUYqYcKLj+cbByLDrIJDKrFjEYLSI44iy6UFL
+# RuPuyH69GjS2ewtAKDHA0zKCUaOOmRHLqw9g9TZEYxyUdFUlVmWazqQQryQjyc7Q
+# DjNOMsDVn8k3tqhqJyLYQabNmD1QNyGXG5thHf3O/CPvzrEQstA+eL/2zxupiONv
+# yw2uqBEMfcHAMqWgUbmY6xFTbH3x1NDeZ+/IyeLg7qxltC7iOZM7RimTRkeUiuAe
+# NF5n2t9JSoPCLjGHgUOKleK6Loug6pFAgVlFyaWcmT0ur56CAoi0ia98OjeoRPS7
+# bk8cwYTHyuV+54yJjC0ol4vmPGZvrShC55oABswRll3XOQU6wjzqZvdBAyP7XcUR
+# rm6plC5WDTfw2FuK11MFKyYzCbRFyWVt6ubvaaRvKhDBQUkJwasEHQQpYBYFjD1g
+# pDqAEZq04FFK1fRATwjDRlgutBJ0TicBTMXBJXFLQxOZxh2ikhUkdAobtCtMAq9w
+# y2GXcUEwggWDMIIDa6ADAgECAg5F5rsDgzPDhWVI5v9FUTANBgkqhkiG9w0BAQwF
+# ADBMMSAwHgYDVQQLExdHbG9iYWxTaWduIFJvb3QgQ0EgLSBSNjETMBEGA1UEChMK
+# R2xvYmFsU2lnbjETMBEGA1UEAxMKR2xvYmFsU2lnbjAeFw0xNDEyMTAwMDAwMDBa
+# Fw0zNDEyMTAwMDAwMDBaMEwxIDAeBgNVBAsTF0dsb2JhbFNpZ24gUm9vdCBDQSAt
+# IFI2MRMwEQYDVQQKEwpHbG9iYWxTaWduMRMwEQYDVQQDEwpHbG9iYWxTaWduMIIC
+# IjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAlQfoc8pm+ewUyns89w0I8bRF
+# CyyCtEjG61s8roO4QZIzFKRvf+kqzMawiGvFtonRxrL/FM5RFCHsSt0bWsbWh+5N
+# OhUG7WRmC5KAykTec5RO86eJf094YwjIElBtQmYvTbl5KE1SGooagLcZgQ5+xIq8
+# ZEwhHENo1z08isWyZtWQmrcxBsW+4m0yBqYe+bnrqqO4v76CY1DQ8BiJ3+QPefXq
+# oh8q0nAue+e8k7ttU+JIfIwQBzj/ZrJ3YX7g6ow8qrSk9vOVShIHbf2MsonP0KBh
+# d8hYdLDUIzr3XTrKotudCd5dRC2Q8YHNV5L6frxQBGM032uTGL5rNrI55KwkNrfw
+# 77YcE1eTtt6y+OKFt3OiuDWqRfLgnTahb1SK8XJWbi6IxVFCRBWU7qPFOJabTk5a
+# C0fzBjZJdzC8cTflpuwhCHX85mEWP3fV2ZGXhAps1AJNdMAU7f05+4PyXhShBLAL
+# 6f7uj+FuC7IIs2FmCWqxBjplllnA8DX9ydoojRoRh3CBCqiadR2eOoYFAJ7bgNYl
+# +dwFnidZTHY5W+r5paHYgw/R/98wEfmFzzNI9cptZBQselhP00sIScWVZBpjDnk9
+# 9bOMylitnEJFeW4OhxlcVLFltr+Mm9wT6Q1vuC7cZ27JixG1hBSKABlwg3mRl5HU
+# Gie/Nx4yB9gUYzwoTK8CAwEAAaNjMGEwDgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB
+# /wQFMAMBAf8wHQYDVR0OBBYEFK5sBaOTE+Ki5+LXHNbH8H/IZ1OgMB8GA1UdIwQY
+# MBaAFK5sBaOTE+Ki5+LXHNbH8H/IZ1OgMA0GCSqGSIb3DQEBDAUAA4ICAQCDJe3o
+# 0f2VUs2ewASgkWnmXNCE3tytok/oR3jWZZipW6g8h3wCitFutxZz5l/AVJjVdL7B
+# zeIRka0jGD3d4XJElrSVXsB7jpl4FkMTVlezorM7tXfcQHKso+ubNT6xCCGh58RD
+# N3kyvrXnnCxMvEMpmY4w06wh4OMd+tgHM3ZUACIquU0gLnBo2uVT/INc053y/0QM
+# RGby0uO9RgAabQK6JV2NoTFR3VRGHE3bmZbvGhwEXKYV73jgef5d2z6qTFX9mhWp
+# b+Gm+99wMOnD7kJG7cKTBYn6fWN7P9BxgXwA6JiuDng0wyX7rwqfIGvdOxOPEozi
+# QRpIenOgd2nHtlx/gsge/lgbKCuobK1ebcAF0nu364D+JTf+AptorEJdw+71zNzw
+# UHXSNmmc5nsE324GabbeCglIWYfrexRgemSqaUPvkcdM7BjdbO9TLYyZ4V7ycj7P
+# VMi9Z+ykD0xF/9O5MCMHTI8Qv4aW2ZlatJlXHKTMuxWJU7osBQ/kxJ4ZsRg01Uyd
+# uu33H68klQR4qAO77oHl2l98i0qhkHQlp7M+S8gsVr3HyO844lyS8Hn3nIS6dC1h
+# ASB+ftHyTwdZX4stQ1LrRgyU4fVmR3l31VRbH60kN8tFWk6gREjI2LCZxRWECfbW
+# SUnAZbjmGnFuoKjxguhFPmzWAtcKZ4MFWsmkEDGCArkwggK1AgEBMGcwVzELMAkG
+# A1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExLTArBgNVBAMTJEds
+# b2JhbFNpZ24gQ0EgZm9yIEFBVEwgLSBTSEEzODQgLSBHNAIMLMYaRpr1hHbBI9e7
+# MAsGCWCGSAFlAwQCAaCCASUwGgYJKoZIhvcNAQkDMQ0GCyqGSIb3DQEJEAEEMCsG
+# CSqGSIb3DQEJNDEeMBwwCwYJYIZIAWUDBAIBoQ0GCSqGSIb3DQEBCwUAMC8GCSqG
+# SIb3DQEJBDEiBCCSANJ4bKTRZskP+NePrnll2Lj+Y8+wmyxitNzkPa2CeDCBqAYL
+# KoZIhvcNAQkQAi8xgZgwgZUwgZIwgY8EIAYjM0LthoXcWXvXWvmTQbDnzAOqJ/UH
+# C1vBwIF+Ou+SMGswW6RZMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxT
+# aWduIG52LXNhMS0wKwYDVQQDEyRHbG9iYWxTaWduIENBIGZvciBBQVRMIC0gU0hB
+# Mzg0IC0gRzQCDCzGGkaa9YR2wSPXuzANBgkqhkiG9w0BAQsFAASCAQA6v11dDXBg
+# AYDNA1WZnN5FqVuqG6kN3jnpEdEYraFivncKDMlRJKYJs8r3Jev+HEAifZD9fAg9
+# T9/RdAj7cASirmRQKb51SDWbht+ss5WtU6OBoJjD3F8DPprKr2pcBTWtaVvbkhWH
+# 8aol8TaxdxaKgMoAMwAW03PKIRoKiOBmJl0wjMc3kvlU7PdoBDZRkmlSZGRy9oYF
+# ok/TNTLTxretk7ZWWX82x/Hy0Qn8CtU8o2MB+6D5z45Do5BV4GPzCjG3tA1CkjT/
+# +7duKWK9vm/HJdakGv0Q2ThHOnYnmaMyJVtIqvnww2wh/3RfwxsxxPeuX0agkTuP
+# z3W84XH/AlGr
 # SIG # End signature block
