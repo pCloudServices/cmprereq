@@ -38,7 +38,7 @@ ocsp.globalsign.com:80
 crl.globalsign.com:80
 secure.globalsign.com:80
 
-Dynamic Privilege Access outbound from the connector server
+Secure Infrastructure Access outbound from the connector server
 ===========================================================
 cms-assets-bucket-445444212982.s3.amazonaws.com:443 <---- if you are on US-EAST-1 region (since US east is default by AWS).
 cms-assets-bucket-445444212982-<AWSRegion>.s3.<AWSRegion>.amazonaws.com:443 <---- Other Regions must have region specified.
@@ -46,7 +46,7 @@ cms-assets-bucket-445444212982-<AWSRegion>.s3.<AWSRegion>.amazonaws.com:443 <---
 <Subdomain>.dpa.cyberark.cloud:443
 a2m4b3cupk8nzj-ats.iot.<AWSRegion>.amazonaws.com:443
 
-Dynamic Privilege Access outbound from client (user) machines
+Secure Infrastructure Access outbound from client (user) machines
 =============================================================
 <Subdomain>.ssh.cyberark.cloud:22
 <Subdomain>.rdp.cyberark.cloud:443/8443
@@ -59,7 +59,7 @@ Dynamic Privilege Access outbound from client (user) machines
 <Subdomain>.mongodb.cyberark.cloud:27017
 <Subdomain>.k8s.cyberark.cloud:443
 
-Dynamic Privilege Access LAN from connector server to target resources
+Secure Infrastructure Access LAN from connector server to target resources
 ======================================================================
 To Linux targets:22
 To Windows targets:3389,135,445,139
