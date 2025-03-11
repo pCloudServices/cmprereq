@@ -62,7 +62,7 @@ Secure Infrastructure Access outbound from client (user) machines
 Secure Infrastructure Access LAN from connector server to target resources
 ======================================================================
 To Linux targets:22
-To Windows targets:3389,135,445,139
+To Windows targets:3389,135,445,139,5986,5985
 To Maria DB targets:3306
 To MySQL DB targets:3306
 To Oracle DB targets:2484
