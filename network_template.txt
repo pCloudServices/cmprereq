@@ -85,4 +85,6 @@ AWS IP Ranges here: https://ip-ranges.amazonaws.com/ip-ranges.json
 
 Customers often ask how to whitelist static IPs of AWS since there are so many and they might change, and we recommend utilizing EDL (External Dynamic List) method, an example of an EDL provider https://docs.paloaltonetworks.com/resources/edl-hosting-service (This is just an example) You're welcome to research about this on google.
 
-Outbound traffic network and port requirements: https://docs.cyberark.com/ispss-deployment/latest/en/Content/Privilege%20Cloud/PrivCloud-sys-req-networks.htm
+Outbound traffic network and port requirements
+===============================================
+https://docs.cyberark.com/ispss-deployment/latest/en/content/deployment/deploy-outbound_traffic.htm
