@@ -100,6 +100,7 @@ $arrCheckPrerequisitesPSM = @(
 "GPO-Local", #PSM
 "GPO-Domain", #PSM
 "CheckNoProxy" #PSM
+"Test-LDAPSConnectivity"
 )
 
 $arrCheckPrerequisitesCPM = @(
@@ -167,7 +168,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_ConnectorCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "39"
+[int]$versionNumber = "40"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -201,18 +202,19 @@ $g_SKIP = "SKIP"
 
 # Supported AWS Regions
 $script:availableRegions = @(
-    [pscustomobject]@{RegionName = "US East" ; RegionCode = "us-east-1" ; Description = "Virginia"} # Virginia
-    [pscustomobject]@{RegionName = "Canada" ; RegionCode = "ca-central-1" ; Description = "Montreal"} # Montreal
-    [pscustomobject]@{RegionName = "Frankfurt" ; RegionCode = "eu-central-1" ; Description = "Frankfurt"} # Frankfurt
-    [pscustomobject]@{RegionName = "London" ; RegionCode = "eu-west-2" ; Description = "London"} # London
-    [pscustomobject]@{RegionName = "Eu South" ; RegionCode = "eu-south-1" ; Description = "Milan" } # Milan
+    [pscustomobject]@{RegionName = "US East" ; RegionCode = "us-east-1" ; Description = "Virginia"} # USA
+    [pscustomobject]@{RegionName = "Canada" ; RegionCode = "ca-central-1" ; Description = "Montreal"} # Canada
+    [pscustomobject]@{RegionName = "Frankfurt" ; RegionCode = "eu-central-1" ; Description = "Frankfurt"} # Germany
+    [pscustomobject]@{RegionName = "London" ; RegionCode = "eu-west-2" ; Description = "London"} # UK
+    [pscustomobject]@{RegionName = "Eu South" ; RegionCode = "eu-south-1" ; Description = "Milan" } # Italy
     [pscustomobject]@{RegionName = "AP Southeast" ; RegionCode = "ap-southeast-1" ; Description = "Singapore"} # Singapore
     [pscustomobject]@{RegionName = "Sydney" ; RegionCode = "ap-southeast-2" ; Description = "Sydney"} # Sydney
     [pscustomobject]@{RegionName = "Tokyo" ; RegionCode = "ap-northeast-1" ; Description = "Tokyo"} # Tokyo
-    [pscustomobject]@{RegionName = "Asia Pacific" ; RegionCode = "ap-south-1" ; Description = "Australia Sydney ,India Mumbai"} # Mumbai
-    [pscustomobject]@{RegionName = "ap-southeast-3" ; RegionCode = "ap-southeast-3" ; Description = "Indonesia Jakarta"}
+    [pscustomobject]@{RegionName = "Asia Pacific" ; RegionCode = "ap-south-1" ; Description = "Australia Sydney ,India Mumbai"} # Asia Pacific
+    [pscustomobject]@{RegionName = "ap-southeast-3" ; RegionCode = "ap-southeast-3" ; Description = "Indonesia Jakarta"} # Indonesia
     [pscustomobject]@{RegionName = "me-central-1" ; RegionCode = "me-central-1" ; Description = "UAE"} # UAE
-    [pscustomobject]@{RegionName = "il-central-1" ; RegionCode = "il-central-1" ; Description = "Tel Aviv"} # Tel Aviv
+    [pscustomobject]@{RegionName = "il-central-1" ; RegionCode = "il-central-1" ; Description = "Tel Aviv"} # IL
+    [pscustomobject]@{RegionName = "sa-east-1" ; RegionCode = "sa-east-1" ; Description = "Sao Paulo"} # Brazil
 )
 
 
@@ -485,7 +487,7 @@ Function OSVersion
 		$errorMsg = ""
 		$result = $false
 		
-		If($actual -Like '*2016*' -or $actual -like '*2019*' -or $actual -like '*2022*')
+		If($actual -Like '*2016*' -or $actual -like '*2019*' -or $actual -like '*2022*' -or $actual -like '*2025*')
 		{
 			$result = $true
 		}
@@ -2255,39 +2257,46 @@ Function ConnectorManagementIOT
 function ConnectorManagementIOTCert {
     [OutputType([PsCustomObject])]
     param ()
-    
-    $expected = "CN=Amazon RSA 2048 M01, O=Amazon, C=US"
-    $result = $false
+
+    $expected = "CN=Amazon RSA 2048 M01–M06, O=Amazon, C=US"
+    $allowedIssuerRegex = '^CN=Amazon RSA 2048 M0[1-6], O=Amazon, C=US$'
+
+    $result   = $false
     $errorMsg = ""
-    $actual = ""
+    $actual   = ""
 
     Write-LogMessage -Type Verbose -Msg "Starting ConnectorManagementIOTCert..."
-    
+
     if (![string]::IsNullOrEmpty($Region)) {
         try {
             $CertURL = "https://a3vvqcp8z371p3-ats.iot.$($Region).amazonaws.com:443"
-            $cert = Get-SSLCertificateDetails -Url $CertURL
-            $actual = $cert.Issuer
-            
-            if ($actual -ne $expected) {
-                $errorMsg = "The expected certificate ('$($expected)') doesn't match the actual certificate received ('$($actual)'). Test it by browsing to this URL: '$($CertURL)'."
-            } else {
+            $cert    = Get-SSLCertificateDetails -Url $CertURL
+            $actual  = $cert.Issuer
+
+            if ($actual -notmatch $allowedIssuerRegex) {
+                $errorMsg = "The expected certificate issuer ('$expected') doesn't match the actual issuer received ('$actual)'). Test it by browsing to this URL: '$CertURL'."
+            }
+            else {
                 $result = $true
             }
 
             Write-LogMessage -Type Verbose -Msg "Finished ConnectorManagementIOTCert..."
-        } catch {
-            $errorMsg = "$(Collect-ExceptionMessage) $($errMsg)"
         }
-    } else {
+        catch {
+            # Keep original behavior: show exception + any CERT-fetch message your helper populated
+            $extra = if ($script:errMsg) { " $($script:errMsg)" } else { "" }
+            $errorMsg = "$(Collect-ExceptionMessage $_.Exception)$extra"
+        }
+    }
+    else {
         $errorMsg = "Skipping test since host name is empty (ConnectorManagementScripts failed?)"
     }
-    
+
     return [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
+        expected = $expected
+        actual   = $actual
+        errorMsg = $errorMsg
+        result   = $result
     }
 }
 
@@ -2509,39 +2518,45 @@ Function SIA-IOT
 function SIA-IOTCert {
     [OutputType([PsCustomObject])]
     param ()
-    
-    $expected = "CN=Amazon RSA 2048 M01, O=Amazon, C=US"
-    $result = $false
+
+    $expected = "CN=Amazon RSA 2048 M01–M06, O=Amazon, C=US"
+    $allowedIssuerRegex = '^CN=Amazon RSA 2048 M0[1-6], O=Amazon, C=US$'
+
+    $result   = $false
     $errorMsg = ""
-    $actual = ""
+    $actual   = ""
 
     Write-LogMessage -Type Verbose -Msg "Starting SIA-IOTCert..."
-    
+
     if (![string]::IsNullOrEmpty($Region)) {
         try {
             $CertURL = "https://a2m4b3cupk8nzj-ats.iot.$($Region).amazonaws.com:443"
-            $cert = Get-SSLCertificateDetails -Url $CertURL
-            $actual = $cert.Issuer
-            
-            if ($actual -ne $expected) {
-                $errorMsg = "The expected certificate ('$($expected)') doesn't match the actual certificate received ('$($actual)'). Test it by browsing to this URL: '$($CertURL)'."
-            } else {
+            $cert    = Get-SSLCertificateDetails -Url $CertURL
+            $actual  = $cert.Issuer
+
+            if ($actual -notmatch $allowedIssuerRegex) {
+                $errorMsg = "The expected certificate issuer ('$expected') doesn't match the actual issuer received ('$actual)'). Test it by browsing to this URL: '$CertURL'."
+            }
+            else {
                 $result = $true
             }
 
             Write-LogMessage -Type Verbose -Msg "Finished SIA-IOTCert..."
-        } catch {
-            $errorMsg = "$(Collect-ExceptionMessage) $($errMsg)"
         }
-    } else {
+        catch {
+            $extra = if ($script:errMsg) { " $($script:errMsg)" } else { "" }
+            $errorMsg = "$(Collect-ExceptionMessage $_.Exception)$extra"
+        }
+    }
+    else {
         $errorMsg = "Skipping test since host name is empty (SIA-Assets failed?)"
     }
-    
+
     return [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
+        expected = $expected
+        actual   = $actual
+        errorMsg = $errorMsg
+        result   = $result
     }
 }
 
@@ -3075,7 +3090,7 @@ function Get-SSLCertificateDetails {
         return $certificate
     } catch {
         $script:errMsg = "Error occurred while fetching CERT: $originalErrorMsg"
-        throw $errMsg
+        throw $script:errMsg
     } finally {
         $sslStream.Close()
         $tcp.Close()
@@ -3460,109 +3475,224 @@ function checkIfPSMisRequired()
     }
 }
 
-<#
-Function CheckPrerequisites {
-    Param (
-        [String[]]$selectedComponents
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Test-LDAPSConnectivity
+# Description....: Validates LDAPS (TCP/636 + LDAP bind over SSL) against a Domain Controller using current logon context
+# Parameters.....: None (uses local domain context)
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+function Test-LDAPSConnectivity {
+    [OutputType([PsCustomObject])]
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $false)]
+        [System.Management.Automation.PSCredential]$DomainCredential,
+
+        [Parameter(Mandatory = $false)]
+        [string]$DomainController,
+
+        [Parameter(Mandatory = $false)]
+        [int]$Port = 636,
+
+        [Parameter(Mandatory = $false)]
+        [switch]$SkipCertificateCheck
     )
-    
-    Try {
-        $global:table = @()
-        $errorCnt = 0
-        $warnCnt = 0
-        $table = ""
 
-        # Track executed methods
-        $executedMethods = @{}
+    Write-LogMessage -Type Verbose -Msg "Starting Test-LDAPSConnectivity..."
 
-        # If "All" is selected, include all components dynamically
-        if ($selectedComponents -contains "All") {
-            $selectedComponents = $componentMapping.Keys
-        }
+    $expected = "LDAPS reachable and bind succeeds (TCP/636 + SSL) using supplied domain credentials"
+    $actual   = ""
+    $errorMsg = ""
+    $result   = $false
 
-        # General checks
-        Write-LogMessage -Type Warning -Msg "< General Related Checks >"
-        foreach ($method in $arrCheckPrerequisitesGeneral) {
-            if (-not $executedMethods[$method]) {
-                Try {
-                    Write-Progress -Activity "Checking $method..."
-                    $resultObject = &$method
-
-                    if ($null -eq $resultObject -or !$resultObject.result) {
-                        $errorCnt++
-                    }
-
-                    Write-Progress -Activity "$method completed" -Completed
-                }
-                Catch {
-                    $resultObject.errorMsg = $_.Exception.Message
-                    $errorCnt++
-                }
-
-                if ($resultObject.errorMsg -ne $g_SKIP) {
-                    AddLineToReport $method $resultObject
-                } else {
-                    $resultObject.errorMsg = ""
-                }
-
-                AddLineToTable $method $resultObject
-                $executedMethods[$method] = $true
-            }
-        }
-
-        # Specific checks
-        foreach ($component in $selectedComponents) {
-            $arrToCheck = $componentMapping[$component]
-            
-            if ($arrToCheck -ne $null) {
-                Write-LogMessage -Type Warning -Msg "< $component Related Checks >"
-                
-                foreach ($method in $arrToCheck) {
-                    if (-not $executedMethods[$method]) {
-                        Try {
-                            Write-Progress -Activity "Checking $method..."
-                            $resultObject = &$method  
-
-                            if ($null -eq $resultObject -or !$resultObject.result) {
-                                $errorCnt++
-                            }
-
-                            Write-Progress -Activity "$method completed" -Completed
-                        }
-                        Catch {
-                            $resultObject.errorMsg = $_.Exception.Message
-                            $errorCnt++
-                        }
-
-                        if ($resultObject.errorMsg -ne $g_SKIP) {
-                            AddLineToReport $method $resultObject
-                        } else {
-                            $resultObject.errorMsg = ""
-                        }
-
-                        AddLineToTable $method $resultObject
-                        $executedMethods[$method] = $true
-                    }
-                }
-            }
-        }
-
-        # Final logging of errors and warnings
-        if ($global:table.Count -gt 0) {
-            $warnCnt = $global:table.Count - $errorCnt
-            Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt failures and $warnCnt warnings."
-            Write-LogMessage -Type Info -Msg "$SEPARATE_LINE"
-            $global:table | Format-Table -Wrap
-            Write-LogMessage -Type LogOnly -Msg $($global:table | Out-String)
-        } else {
-            Write-LogMessage -Type Success -Msg "Checking Prerequisites completed successfully"
-        }
+    # This object is what you asked to display on failure (original-style details)
+    $detail = [PSCustomObject]@{
+        Success            = $false
+        DomainController   = $null
+        Port               = $Port
+        UsedSSL            = $true
+        CertificateTrusted = $true
+        TcpReachable       = $false
+        Authenticated      = $false
+        ErrorCategory      = $null
+        ErrorMessage       = $null
     }
-    Catch {
-        Throw $(New-Object System.Exception("CheckPrerequisites: Failed to run CheckPrerequisites", $_.Exception))
+
+    try {
+        if ($OutOfDomain) {
+            Write-LogMessage -Type Verbose -Msg "OutOfDomain switch detected - skipping LDAPS connectivity test."
+            return [PsCustomObject]@{
+                expected = $expected
+                actual   = "Skipped (OutOfDomain)"
+                errorMsg = $g_SKIP
+                result   = $true
+            }
+        }
+
+        # Determine domain (for SRV lookup if DC not provided)
+        $domainFqdn = $null
+        try {
+            $domainFqdn = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).Name
+        } catch {
+            if (-not [string]::IsNullOrWhiteSpace($env:USERDNSDOMAIN)) {
+                $domainFqdn = $env:USERDNSDOMAIN
+            }
+        }
+
+        if ([string]::IsNullOrWhiteSpace($domainFqdn)) {
+            $detail.ErrorCategory = "Resolution"
+            $detail.ErrorMessage  = "Could not determine domain FQDN (machine may not be domain-joined)."
+            throw $detail.ErrorMessage
+        }
+
+        # Prompt for credentials if not provided
+        if (-not $DomainCredential) {
+            Write-LogMessage -Type Verbose -Msg "Prompting for domain credentials for LDAPS test..."
+            $DomainCredential = Get-Credential -Message "Enter domain credentials for LDAPS connectivity test (bind over SSL)"
+        }
+
+        if (-not $DomainCredential) {
+            $detail.ErrorCategory = "Authentication"
+            $detail.ErrorMessage  = "No credentials supplied."
+            throw $detail.ErrorMessage
+        }
+
+        # Resolve Domain Controller via DNS SRV if not provided
+        if (-not $DomainController) {
+            try {
+                if (Get-Command Resolve-DnsName -ErrorAction Ignore) {
+                    $srvRecords = Resolve-DnsName -Type SRV "_ldap._tcp.$domainFqdn" -ErrorAction Stop |
+                                  Sort-Object -Property Priority, Weight
+
+                    if (-not $srvRecords) { throw "No SRV records found." }
+                    $DomainController = $srvRecords[0].NameTarget.TrimEnd('.')
+                } else {
+                    # fallback to AD API
+                    $DomainController = ([System.DirectoryServices.ActiveDirectory.Domain]::GetComputerDomain()).FindDomainController().Name
+                }
+            }
+            catch {
+                $detail.ErrorCategory = "Resolution"
+                $detail.ErrorMessage  = "Failed to resolve domain controller. $(Collect-ExceptionMessage $_.Exception)"
+                throw $detail.ErrorMessage
+            }
+        }
+
+        $detail.DomainController = $DomainController
+
+        # TCP Connectivity Test
+        try {
+            $tcpClient = New-Object System.Net.Sockets.TcpClient
+            $async = $tcpClient.BeginConnect($DomainController, $Port, $null, $null)
+            $wait  = $async.AsyncWaitHandle.WaitOne(5000, $false)
+
+            if (-not $wait -or -not $tcpClient.Connected) {
+                throw "TCP connection to $DomainController on port $Port failed."
+            }
+
+            $tcpClient.EndConnect($async)
+            $tcpClient.Close()
+
+            $detail.TcpReachable = $true
+        }
+        catch {
+            $detail.ErrorCategory = "Network"
+            $detail.ErrorMessage  = $_.Exception.Message
+            throw $detail.ErrorMessage
+        }
+
+        # LDAP Bind over SSL
+        try { Add-Type -AssemblyName System.DirectoryServices.Protocols -ErrorAction Stop }
+        catch {
+            $detail.ErrorCategory = "LDAP"
+            $detail.ErrorMessage  = "Failed to load System.DirectoryServices.Protocols. $(Collect-ExceptionMessage $_.Exception)"
+            throw $detail.ErrorMessage
+        }
+
+        $ldapConnection = $null
+        try {
+            $identifier = New-Object System.DirectoryServices.Protocols.LdapDirectoryIdentifier($DomainController, $Port)
+            $ldapConnection = New-Object System.DirectoryServices.Protocols.LdapConnection($identifier)
+
+            $ldapConnection.Credential = $DomainCredential.GetNetworkCredential()
+            $ldapConnection.AuthType   = [System.DirectoryServices.Protocols.AuthType]::Negotiate
+            $ldapConnection.SessionOptions.SecureSocketLayer = $true
+
+            if ($SkipCertificateCheck) {
+                $ldapConnection.SessionOptions.VerifyServerCertificate = { $true }
+                $detail.CertificateTrusted = $false
+            }
+
+            $ldapConnection.Bind()
+
+            $detail.Authenticated = $true
+            $detail.Success       = $true
+        }
+        catch [System.DirectoryServices.Protocols.LdapException] {
+            $ldapError = $_.Exception
+
+            if ($ldapError.ErrorCode -eq 49) {
+                $detail.ErrorCategory = "Authentication"
+            }
+            elseif ($ldapError.Message -match "certificate|SSL|TLS") {
+                $detail.ErrorCategory = "Certificate"
+            }
+            else {
+                $detail.ErrorCategory = "LDAP"
+            }
+
+            $detail.ErrorMessage = $ldapError.Message
+            throw $detail.ErrorMessage
+        }
+        catch {
+            $detail.ErrorCategory = "Unknown"
+            $detail.ErrorMessage  = $(Collect-ExceptionMessage $_.Exception)
+            throw $detail.ErrorMessage
+        }
+        finally {
+            if ($ldapConnection) { $ldapConnection.Dispose() }
+        }
+
+        $result = $detail.Success
+        $actual = "Success. DC: $($detail.DomainController); TCP:$($detail.TcpReachable); Auth:$($detail.Authenticated); CertTrusted:$($detail.CertificateTrusted)"
+        $errorMsg = ""
+    }
+    catch {
+        $result = $false
+
+        if ([string]::IsNullOrWhiteSpace($detail.DomainController)) {
+            $detail.DomainController = $DomainController
+        }
+
+        $actual   = if ($detail.ErrorCategory) { "$($detail.ErrorCategory) failure" } else { "Failure" }
+        $errorMsg = if ($detail.ErrorMessage) { $detail.ErrorMessage } else { "LDAPS connectivity test failed." }
+
+        $detailBlock = @(
+            "Success            : $($detail.Success)"
+            "DomainController   : $($detail.DomainController)"
+            "Port               : $($detail.Port)"
+            "UsedSSL            : $($detail.UsedSSL)"
+            "CertificateTrusted : $($detail.CertificateTrusted)"
+            "TcpReachable       : $($detail.TcpReachable)"
+            "Authenticated      : $($detail.Authenticated)"
+            "ErrorCategory      : $($detail.ErrorCategory)"
+            "ErrorMessage       : $($detail.ErrorMessage)"
+        ) -join "`r`n"
+
+        Write-LogMessage -Type Error -Msg ("Test-LDAPSConnectivity failed. Details:`r`n$detailBlock")
+    }
+    finally {
+        $DomainCredential = $null
+        Write-LogMessage -Type Verbose -Msg "Finished Test-LDAPSConnectivity"
+    }
+
+    return [PsCustomObject]@{
+        expected = $expected
+        actual   = $actual
+        errorMsg = $errorMsg
+        result   = $result
     }
 }
-#>
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Get-Choice
@@ -3904,7 +4034,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             Write-LogMessage -type Info -MSG "** Since Vault Connectivity test passed, let's also run CPM Connection Install Test **"
             Write-LogMessage -type Info -MSG "** You will need to provide your Privilege Cloud Install Username and Password. **"
             #Ask if User wants to perform the test, subsequent runs won't show this question, you can only trigger this from Troubleshooting or -Switch.
-            $decisionCPM = Get-Choice -Title "Run CPM Install Connection test?" -Options "Yes (Recommended)", "No" -DefaultChoice 1
+            $decisionCPM = Get-Choice -Title "Simulate Vault Connectivity test? (needed for CPM & PSM)" -Options "Yes (Recommended)", "No" -DefaultChoice 1
             if ($decisionCPM -eq "No")
             {
                 Write-LogMessage -type Warning -MSG "OK, if you change your mind, you can always rerun the script with -CPMConnectionTest flag (or -Troubleshooting and selecting from menu)."
@@ -4853,11 +4983,12 @@ else
 }
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 #########################################################
+
 # SIG # Begin signature block
-# MIIpJQYJKoZIhvcNAQcCoIIpFjCCKRICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIpLQYJKoZIhvcNAQcCoIIpHjCCKRoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCD6DZcsD1g76dtM
-# tmMMVIbIR3H5BdEqWKne3cisMcXkfKCCDpUwggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCACK+35+xcpxiac
+# gCSq2kOA6+3ba39A/3My04QjpDrTNqCCDq8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -4894,184 +5025,184 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # A9jYIivzJxZPOOhRQAyuku++PX33gMZMNleElaeEFUgwDlInCI2Oor0ixxnJpsoO
 # qHo222q6YV8RJJWk4o5o7hmpSZle0LQ0vdb5QMcQlzFSOTUpEYck08T7qWPLd0jV
 # +mL8JOAEek7Q5G7ezp44UCb0IXFl1wkl1MkHAHq4x/N36MXU4lXQ0x72f1LiSY25
-# EXIMiEQmM2YBRN/kMw4h3mKJSAfa9TCCB6UwggWNoAMCAQICDAJZP4AHVQPEmDE5
-# fjANBgkqhkiG9w0BAQsFADBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFs
+# EXIMiEQmM2YBRN/kMw4h3mKJSAfa9TCCB78wggWnoAMCAQICDFvWkQMw/ZfAZpUM
+# wDANBgkqhkiG9w0BAQsFADBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFs
 # U2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVWIENvZGVT
-# aWduaW5nIENBIDIwMjAwHhcNMjQwMzA0MTM1NzE4WhcNMjYwMzA1MTM1NzE4WjCB
-# 6zEdMBsGA1UEDwwUUHJpdmF0ZSBPcmdhbml6YXRpb24xEjAQBgNVBAUTCTUxMjI5
-# MTY0MjETMBEGCysGAQQBgjc8AgEDEwJJTDELMAkGA1UEBhMCSUwxGTAXBgNVBAgT
-# EENlbnRyYWwgRGlzdHJpY3QxFDASBgNVBAcTC1BldGFoIFRpa3ZhMR8wHQYDVQQK
-# ExZDeWJlckFyayBTb2Z0d2FyZSBMdGQuMR8wHQYDVQQDExZDeWJlckFyayBTb2Z0
-# d2FyZSBMdGQuMSEwHwYJKoZIhvcNAQkBFhJhZG1pbkBjeWJlcmFyay5jb20wggIi
-# MA0GCSqGSIb3DQEBAQUAA4ICDwAwggIKAoICAQCW/EphpbQKOtU69jouawb8wLcd
-# 1OFl4mjU/IwWs/F50xD/XtpkocmEjb5eQmzWDLjFjyaQc4+9lKZVmh5BJiH5O/4K
-# Zh07tYcD/zWw1+ASFu9M/46znESl0Wu9T743zWm/8MNI21Z7GiXocpk3ca81IOsp
-# PNVU/qyMMgU67gK2l48ywRVLposh2oQcU2oGofzk3GvfQ1Ej4/HfUaT0U45V+uMj
-# +XyNo6QZcfCYQiv9TLqwhVzD/PDvo2IMDk153Vt7y4/PKi4eimip0a/sWoNQV8aD
-# +iOF6qgBKdQ34l7nPWeAic1EnkOiBMPlukrmBxOo6qX3OOpoxByG8iQKCt2ZsJE1
-# Jfg6r/p+idbbFnRMd4jGxG4byA3cVxBWupE+qcZabqtcWcIjmWIFksvRqFCHZFZj
-# 9KLy46c1I5jG6G99jr8jOJYxupmLBvWo4VwAxAm10rAn2473+axyExaKtqR5DP1H
-# 8kjmUoEtto2v/l2XK0SpxIfNYEYvbp0uRw5d6SmWEyp4q5kvFxRsL7R3rJcgxtll
-# lHiFBfo9M5s/aNqwbKyvf5c3QjLI9xADuDdaYIYc5HDolgnDdyjzpefSDEljmAmB
-# BqRYwDe5/dhCDgn8yoZ0gOWbAxyGHj+BA35G6dge2sHsD3WHV4xNXtF4A2v6n8Y6
-# dD0qufDn1Q8C/zZzuQIDAQABo4IB1TCCAdEwDgYDVR0PAQH/BAQDAgeAMIGfBggr
-# BgEFBQcBAQSBkjCBjzBMBggrBgEFBQcwAoZAaHR0cDovL3NlY3VyZS5nbG9iYWxz
-# aWduLmNvbS9jYWNlcnQvZ3NnY2NyNDVldmNvZGVzaWduY2EyMDIwLmNydDA/Bggr
-# BgEFBQcwAYYzaHR0cDovL29jc3AuZ2xvYmFsc2lnbi5jb20vZ3NnY2NyNDVldmNv
-# ZGVzaWduY2EyMDIwMFUGA1UdIAROMEwwQQYJKwYBBAGgMgECMDQwMgYIKwYBBQUH
-# AgEWJmh0dHBzOi8vd3d3Lmdsb2JhbHNpZ24uY29tL3JlcG9zaXRvcnkvMAcGBWeB
-# DAEDMAkGA1UdEwQCMAAwRwYDVR0fBEAwPjA8oDqgOIY2aHR0cDovL2NybC5nbG9i
-# YWxzaWduLmNvbS9nc2djY3I0NWV2Y29kZXNpZ25jYTIwMjAuY3JsMB0GA1UdEQQW
-# MBSBEmFkbWluQGN5YmVyYXJrLmNvbTATBgNVHSUEDDAKBggrBgEFBQcDAzAfBgNV
-# HSMEGDAWgBQlndD8WQmGY8Xs87ETO1ccA5I2ETAdBgNVHQ4EFgQUvfk3K3nY9zOK
-# r24uYKcj/KTt+p8wDQYJKoZIhvcNAQELBQADggIBAB7REam0h5j/shCjeh87xdmt
-# AvLf+bBp2STB6GVNs6nZixmLw4qjCWkFdeEBM5SG9HEpKQxCrmVAk9waH14pb7O7
-# xrNeBcdsNMDZ3b3sjae63LodNC4kS+qPWGlIBG9giV3dbZjnTCW0zVI0WXWX6o5s
-# vOs35FeLIAak8t8NsA3fJK0ngsBjOfO+2aJikZU4BaDy8Oj04TTAvLeLe2wtuzt/
-# W+dddwIVNys7VFs4dppNCtrzPK0pYYWIq17KHPtQ0yPp5EtxWQqBgEnDjdu1mDss
-# 0I93shcUYmst3AqGVliQRJZHnE6Hk665IiN7S6QJ+UVoyxprVGC6+k21pCPiMTTr
-# BtwvfEP00JB/CGG3/Q+yIoetCMv1jkg6Cso7KOAGQkfeVAucRgq61AfDjp7f8LwO
-# dqLJhQvL6pJ0fLiGSlh6y9Rr0kG0DRHKmsLUYofs67oRLUT9T/RqFwYSTzU4eKxU
-# TJurkigpkCbn55bYw+C5T0+gX1QI16K97E51wEnJ9jp6u+YenUy/OgGDGnUWLiMn
-# 4M6L60ZOgUx8Bndk5UxPPgdYwn6R6iPaJhYe0TAB2mTD9qPPD4+NBzBMDHC25tvP
-# +Si4LmDAxO1H35ifRREyPZ1OD08iWQDsjcHqtS4vntaRa9SNtwNE/4KJtBE1C+vC
-# c3epnQA75eTfm9t3CdYEMYIZ5jCCGeICAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcG
-# A1UEChMQR2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0Mg
-# UjQ1IEVWIENvZGVTaWduaW5nIENBIDIwMjACDAJZP4AHVQPEmDE5fjANBglghkgB
-# ZQMEAgEFAKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEE
-# AYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJ
-# BDEiBCBuhYAGTKIXFvMumqPV3RdJmYBHhmlOW7sXgI2hZOK1pzANBgkqhkiG9w0B
-# AQEFAASCAgAkserrxsDFp0EAvZ0cge6MLJH6JzJZCQFdPonv4ZEqtGHDzGcRY9kK
-# Zzgg/ucYc42q15DVqn1foOmHU3WIyNpIkK2T0pLTR2+JX4QKSdBojM7IOSg4FFwp
-# cYVPq2VUwK8IKLLH4zGkCnmYYoDg4c3F8IV+eplPMtS606eM+zss4kB6bc9UM1/l
-# 0H4Qe2xpLmSRTztBrHKy6kcsLkhaXQF6/B+mCKJ8mA2CvvDPJPqtsp7dEps1YPeG
-# WqqyoVfjvXFPXJoxs+gKx86RJikq1G3/yibSkVs8Xwzn62oxxVvuhCN0mry334ow
-# PcEqA3xRAR/RpPmyyXJdFq7Wcgaf+FPHRmq4lK9jERZh0/z1nFsIRZR40AHZlqA8
-# l4lBfZPSVWPhBgrTRwK7W1cefTkLrAMzJs+1gV6yFnCYl9ReHgGaTChsZrlktyQT
-# jhRqJJ3vlSoYSuNhGKCsm87xOop7BptQbXjAtfTcUcldp2XfZnmHmdM3jVvu/yvh
-# JG6DPT1YjFhaHOU+L+671/jVqyHOaTpyzrDF54x/DXeqOr1QACx3Coe/3VZAjBgk
-# KVs0V9yVsJ3tTiMNwc/QotWWTPCQZmAtCOZB1ddCZuPKsTvY+0i5gDVIQQTwTzaX
-# XgjRRCIIb4X4ih7nosdXdSPpCVOS3KaxkeuvLT+FLS1p3fWmra+6b6GCFs0wghbJ
-# BgorBgEEAYI3AwMBMYIWuTCCFrUGCSqGSIb3DQEHAqCCFqYwghaiAgEDMQ0wCwYJ
-# YIZIAWUDBAIBMIHoBgsqhkiG9w0BCRABBKCB2ASB1TCB0gIBAQYLKwYBBAGgMgID
-# AQIwMTANBglghkgBZQMEAgEFAAQg3GFBELMBZT/wXkyFMVLZNoKiacmnUmgx5WnC
-# mF9IFqgCFDxMRsFvOFzOgdK8WwJ3yIyGJIO2GA8yMDI1MDIxMjE0MzEyM1owAwIB
-# AaBhpF8wXTELMAkGA1UEBhMCQkUxGTAXBgNVBAoMEEdsb2JhbFNpZ24gbnYtc2Ex
-# MzAxBgNVBAMMKkdsb2JhbHNpZ24gVFNBIGZvciBDb2RlU2lnbjEgLSBSNiAtIDIw
-# MjMxMaCCElQwggZsMIIEVKADAgECAhABm+reyE1rj/dsOp8uASQWMA0GCSqGSIb3
-# DQEBCwUAMFsxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNh
-# MTEwLwYDVQQDEyhHbG9iYWxTaWduIFRpbWVzdGFtcGluZyBDQSAtIFNIQTM4NCAt
-# IEc0MB4XDTIzMTEwNzE3MTM0MFoXDTM0MTIwOTE3MTM0MFowXTELMAkGA1UEBhMC
-# QkUxGTAXBgNVBAoMEEdsb2JhbFNpZ24gbnYtc2ExMzAxBgNVBAMMKkdsb2JhbHNp
-# Z24gVFNBIGZvciBDb2RlU2lnbjEgLSBSNiAtIDIwMjMxMTCCAaIwDQYJKoZIhvcN
-# AQEBBQADggGPADCCAYoCggGBAOqEN1BoPJWFtUhUcZfzhHLJnYDTCNxZu7/LTZBp
-# R4nlLNjxqGp+YDdJc5u4mLMU4O+Mk3AgtfUr12YFdT96hFCpUg/g1udv1Bw1LuAv
-# KSSjjnclJ+C4831kdQyaQuXGneLYh3OL76CNl34WoMSyRs9gxs8PgVCA3U/p5Eai
-# NKc+GMdrtLb7vtqpVn5/nF02PWM0IUvI0qMTGj4vUWh1+X/8cIQRZTMSs0ZlKISg
-# M8CSne24H4lj0B57LFuwBPS9cmPOsDEhAQJqcrIiLO/rKjsQ1fGa9CaiLPxTAQR5
-# I2lR012+c4TLm4OIbSDSIM6Bq2oiS3mQQuaCQq8D69TQ2oN6wy1I8c1FkbcRQd0X
-# 70D8EqKywFmqVJdObcN63YaG1Ds3RzjoAzwxv0wze0Ps8ND/ZaafmD3SxrpZImwQ
-# WBHFBMzoopiwHTPQ85Ud+O1xtAtB1WR5orxgLsN6yd5wNxIWPgKPXTgRsASJZ4ul
-# LSDbuNb1nPUPvIi/JyzD+SCiwQIDAQABo4IBqDCCAaQwDgYDVR0PAQH/BAQDAgeA
-# MBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMB0GA1UdDgQWBBT5Tqu+uPhb/8LHA/RB
-# 7pz41nR9PzBWBgNVHSAETzBNMAgGBmeBDAEEAjBBBgkrBgEEAaAyAR4wNDAyBggr
-# BgEFBQcCARYmaHR0cHM6Ly93d3cuZ2xvYmFsc2lnbi5jb20vcmVwb3NpdG9yeS8w
-# DAYDVR0TAQH/BAIwADCBkAYIKwYBBQUHAQEEgYMwgYAwOQYIKwYBBQUHMAGGLWh0
-# dHA6Ly9vY3NwLmdsb2JhbHNpZ24uY29tL2NhL2dzdHNhY2FzaGEzODRnNDBDBggr
-# BgEFBQcwAoY3aHR0cDovL3NlY3VyZS5nbG9iYWxzaWduLmNvbS9jYWNlcnQvZ3N0
-# c2FjYXNoYTM4NGc0LmNydDAfBgNVHSMEGDAWgBTqFsZp5+PLV0U5M6TwQL7Qw71l
-# ljBBBgNVHR8EOjA4MDagNKAyhjBodHRwOi8vY3JsLmdsb2JhbHNpZ24uY29tL2Nh
-# L2dzdHNhY2FzaGEzODRnNC5jcmwwDQYJKoZIhvcNAQELBQADggIBAJX0Z8+TmkOS
-# gxd21iBVvIn/5F+y5RUat5cRQC4AQb7FPySgG0cHMwRMtLRi/8bu0wzCNKCUXDeY
-# 60T4X/gnCgK+HtEkHSPLLxyrJ3qzqcUvDOTlkPAVJB6jFRn474PoT7toniNvfT0N
-# cXBhMnxGbvKP0ZzoQ036g+H/xOA+/t5X3wZr82oGgWirDHwq949C/8BzadscpxZP
-# JhlYc+2UXuQaohCCBzI7yp6/3Tl11LyLVD9+UJU0n5I5JFMYg1DUWy9mtHv+Wynr
-# HsUF/aM9+6Gw8yt5D7FLrMOj2aPcLJwrI5b2eiq7rcVXtoS2Y7NgmBHsxtZmbyKD
-# HIpYA/SP7JxO0N/uzmEh07WVVEk7IVE9oSOFksJb8nqUhJgKjyRWIooE+rSaiUg1
-# +G/rgYYRU8CTezq01DTMYtY1YY6mUPuIdB7XMTUhHhG/q6NkU45U4nNmpPtmY+E3
-# ycRr+yszixHDdJCBg8hPhsrdSpfbfpBQJaFh7IabNlIHyz5iVewzpuW4GvrdJC4M
-# +TKJMWo1lf720f8Xiq4jCSshrmLu9+4357DJsxXtdpq3/ef+4WjeRMEKdOGVyFf7
-# FOseWt+WdcVlGff01Y0hr2O26/TiF0aft9cHbmqdK/7p0nFO0r5PYtNJ1mBfQON2
-# mSBE2Epcs10a2eKqv01ZABeeYGc6RxKgMIIGWTCCBEGgAwIBAgINAewckkDe/S5A
-# XXxHdDANBgkqhkiG9w0BAQwFADBMMSAwHgYDVQQLExdHbG9iYWxTaWduIFJvb3Qg
-# Q0EgLSBSNjETMBEGA1UEChMKR2xvYmFsU2lnbjETMBEGA1UEAxMKR2xvYmFsU2ln
-# bjAeFw0xODA2MjAwMDAwMDBaFw0zNDEyMTAwMDAwMDBaMFsxCzAJBgNVBAYTAkJF
-# MRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTEwLwYDVQQDEyhHbG9iYWxTaWdu
-# IFRpbWVzdGFtcGluZyBDQSAtIFNIQTM4NCAtIEc0MIICIjANBgkqhkiG9w0BAQEF
-# AAOCAg8AMIICCgKCAgEA8ALiMCP64BvhmnSzr3WDX6lHUsdhOmN8OSN5bXT8MeR0
-# EhmW+s4nYluuB4on7lejxDXtszTHrMMM64BmbdEoSsEsu7lw8nKujPeZWl12rr9E
-# qHxBJI6PusVP/zZBq6ct/XhOQ4j+kxkX2e4xz7yKO25qxIjw7pf23PMYoEuZHA6H
-# pybhiMmg5ZninvScTD9dW+y279Jlz0ULVD2xVFMHi5luuFSZiqgxkjvyen38Dljf
-# gWrhsGweZYIq1CHHlP5CljvxC7F/f0aYDoc9emXr0VapLr37WD21hfpTmU1bdO1y
-# S6INgjcZDNCr6lrB7w/Vmbk/9E818ZwP0zcTUtklNO2W7/hn6gi+j0l6/5Cx1Pcp
-# Fdf5DV3Wh0MedMRwKLSAe70qm7uE4Q6sbw25tfZtVv6KHQk+JA5nJsf8sg2glLCy
-# lMx75mf+pliy1NhBEsFV/W6RxbuxTAhLntRCBm8bGNU26mSuzv31BebiZtAOBSGs
-# sREGIxnk+wU0ROoIrp1JZxGLguWtWoanZv0zAwHemSX5cW7pnF0CTGA8zwKPAf1y
-# 7pLxpxLeQhJN7Kkm5XcCrA5XDAnRYZ4miPzIsk3bZPBFn7rBP1Sj2HYClWxqjcoi
-# XPYMBOMp+kuwHNM3dITZHWarNHOPHn18XpbWPRmwl+qMUJFtr1eGfhA3HWsaFN8C
-# AwEAAaOCASkwggElMA4GA1UdDwEB/wQEAwIBhjASBgNVHRMBAf8ECDAGAQH/AgEA
-# MB0GA1UdDgQWBBTqFsZp5+PLV0U5M6TwQL7Qw71lljAfBgNVHSMEGDAWgBSubAWj
-# kxPioufi1xzWx/B/yGdToDA+BggrBgEFBQcBAQQyMDAwLgYIKwYBBQUHMAGGImh0
-# dHA6Ly9vY3NwMi5nbG9iYWxzaWduLmNvbS9yb290cjYwNgYDVR0fBC8wLTAroCmg
-# J4YlaHR0cDovL2NybC5nbG9iYWxzaWduLmNvbS9yb290LXI2LmNybDBHBgNVHSAE
-# QDA+MDwGBFUdIAAwNDAyBggrBgEFBQcCARYmaHR0cHM6Ly93d3cuZ2xvYmFsc2ln
-# bi5jb20vcmVwb3NpdG9yeS8wDQYJKoZIhvcNAQEMBQADggIBAH/iiNlXZytCX4Gn
-# CQu6xLsoGFbWTL/bGwdwxvsLCa0AOmAzHznGFmsZQEklCB7km/fWpA2PHpbyhqIX
-# 3kG/T+G8q83uwCOMxoX+SxUk+RhE7B/CpKzQss/swlZlHb1/9t6CyLefYdO1RkiY
-# lwJnehaVSttixtCzAsw0SEVV3ezpSp9eFO1yEHF2cNIPlvPqN1eUkRiv3I2ZOBlY
-# wqmhfqJuFSbqtPl/KufnSGRpL9KaoXL29yRLdFp9coY1swJXH4uc/LusTN763lNM
-# g/0SsbZJVU91naxvSsguarnKiMMSME6yCHOfXqHWmc7pfUuWLMwWaxjN5Fk3hgks
-# 4kXWss1ugnWl2o0et1sviC49ffHykTAFnM57fKDFrK9RBvARxx0wxVFWYOh8lT0i
-# 49UKJFMnl4D6SIknLHniPOWbHuOqhIKJPsBK9SH+YhDtHTD89szqSCd8i3VCf2vL
-# 86VrlR8EWDQKie2CUOTRe6jJ5r5IqitV2Y23JSAOG1Gg1GOqg+pscmFKyfpDxMZX
-# xZ22PLCLsLkcMe+97xTYFEBsIB3CLegLxo1tjLZx7VIh/j72n585Gq6s0i96ILH0
-# rKod4i0UnfqWah3GPMrz2Ry/U02kR1l8lcRDQfkl4iwQfoH5DZSnffK1CfXYYHJA
-# UJUg1ENEvvqglecgWbZ4xqRqqiKbMIIFgzCCA2ugAwIBAgIORea7A4Mzw4VlSOb/
-# RVEwDQYJKoZIhvcNAQEMBQAwTDEgMB4GA1UECxMXR2xvYmFsU2lnbiBSb290IENB
-# IC0gUjYxEzARBgNVBAoTCkdsb2JhbFNpZ24xEzARBgNVBAMTCkdsb2JhbFNpZ24w
-# HhcNMTQxMjEwMDAwMDAwWhcNMzQxMjEwMDAwMDAwWjBMMSAwHgYDVQQLExdHbG9i
-# YWxTaWduIFJvb3QgQ0EgLSBSNjETMBEGA1UEChMKR2xvYmFsU2lnbjETMBEGA1UE
-# AxMKR2xvYmFsU2lnbjCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAJUH
-# 6HPKZvnsFMp7PPcNCPG0RQssgrRIxutbPK6DuEGSMxSkb3/pKszGsIhrxbaJ0cay
-# /xTOURQh7ErdG1rG1ofuTToVBu1kZguSgMpE3nOUTvOniX9PeGMIyBJQbUJmL025
-# eShNUhqKGoC3GYEOfsSKvGRMIRxDaNc9PIrFsmbVkJq3MQbFvuJtMgamHvm566qj
-# uL++gmNQ0PAYid/kD3n16qIfKtJwLnvnvJO7bVPiSHyMEAc4/2ayd2F+4OqMPKq0
-# pPbzlUoSB239jLKJz9CgYXfIWHSw1CM69106yqLbnQneXUQtkPGBzVeS+n68UARj
-# NN9rkxi+azayOeSsJDa38O+2HBNXk7besvjihbdzorg1qkXy4J02oW9UivFyVm4u
-# iMVRQkQVlO6jxTiWm05OWgtH8wY2SXcwvHE35absIQh1/OZhFj931dmRl4QKbNQC
-# TXTAFO39OfuD8l4UoQSwC+n+7o/hbguyCLNhZglqsQY6ZZZZwPA1/cnaKI0aEYdw
-# gQqomnUdnjqGBQCe24DWJfncBZ4nWUx2OVvq+aWh2IMP0f/fMBH5hc8zSPXKbWQU
-# LHpYT9NLCEnFlWQaYw55PfWzjMpYrZxCRXluDocZXFSxZba/jJvcE+kNb7gu3Gdu
-# yYsRtYQUigAZcIN5kZeR1BonvzceMgfYFGM8KEyvAgMBAAGjYzBhMA4GA1UdDwEB
-# /wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBSubAWjkxPioufi1xzW
-# x/B/yGdToDAfBgNVHSMEGDAWgBSubAWjkxPioufi1xzWx/B/yGdToDANBgkqhkiG
-# 9w0BAQwFAAOCAgEAgyXt6NH9lVLNnsAEoJFp5lzQhN7craJP6Ed41mWYqVuoPId8
-# AorRbrcWc+ZfwFSY1XS+wc3iEZGtIxg93eFyRJa0lV7Ae46ZeBZDE1ZXs6KzO7V3
-# 3EByrKPrmzU+sQghoefEQzd5Mr6155wsTLxDKZmOMNOsIeDjHfrYBzN2VAAiKrlN
-# IC5waNrlU/yDXNOd8v9EDERm8tLjvUYAGm0CuiVdjaExUd1URhxN25mW7xocBFym
-# Fe944Hn+Xds+qkxV/ZoVqW/hpvvfcDDpw+5CRu3CkwWJ+n1jez/QcYF8AOiYrg54
-# NMMl+68KnyBr3TsTjxKM4kEaSHpzoHdpx7Zcf4LIHv5YGygrqGytXm3ABdJ7t+uA
-# /iU3/gKbaKxCXcPu9czc8FB10jZpnOZ7BN9uBmm23goJSFmH63sUYHpkqmlD75HH
-# TOwY3WzvUy2MmeFe8nI+z1TIvWfspA9MRf/TuTAjB0yPEL+GltmZWrSZVxykzLsV
-# iVO6LAUP5MSeGbEYNNVMnbrt9x+vJJUEeKgDu+6B5dpffItKoZB0JaezPkvILFa9
-# x8jvOOJckvB595yEunQtYQEgfn7R8k8HWV+LLUNS60YMlOH1Zkd5d9VUWx+tJDfL
-# RVpOoERIyNiwmcUVhAn21klJwGW45hpxbqCo8YLoRT5s1gLXCmeDBVrJpBAxggNJ
-# MIIDRQIBATBvMFsxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52
-# LXNhMTEwLwYDVQQDEyhHbG9iYWxTaWduIFRpbWVzdGFtcGluZyBDQSAtIFNIQTM4
-# NCAtIEc0AhABm+reyE1rj/dsOp8uASQWMAsGCWCGSAFlAwQCAaCCAS0wGgYJKoZI
-# hvcNAQkDMQ0GCyqGSIb3DQEJEAEEMCsGCSqGSIb3DQEJNDEeMBwwCwYJYIZIAWUD
-# BAIBoQ0GCSqGSIb3DQEBCwUAMC8GCSqGSIb3DQEJBDEiBCCUkPZdDoQfAaMQK7gf
-# CdhyNFhstXE7IYT/B5VCNi9PDjCBsAYLKoZIhvcNAQkQAi8xgaAwgZ0wgZowgZcE
-# IDqIepUbXrkqXuFPbLt2gjelRdAQW/BFEb3iX4KpFtHoMHMwX6RdMFsxCzAJBgNV
-# BAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNhMTEwLwYDVQQDEyhHbG9i
-# YWxTaWduIFRpbWVzdGFtcGluZyBDQSAtIFNIQTM4NCAtIEc0AhABm+reyE1rj/ds
-# Op8uASQWMA0GCSqGSIb3DQEBCwUABIIBgAr5shH5fjFgfY7rpUEFD4CX+kBdZS19
-# PK0LWewAh055PEWU4YU1HuJ/h1cXgTxcZS5Pb6KB8fKTXx/JwXqNe5XAQy03GRxd
-# qzkpoMUZGNkM2MCQB9jPA/gxsx22NB1uc2bNAPnT25CopN9J5OuV2XodwkguzHB5
-# fCKrKvp5kZxp6ivtVQd4j1KOgfkzqeJnhLg1LZL6ECGXLDU3MLTlTXyrBQ8YiM5p
-# eQOYA/6IRMF7s4tkp27WpBfgXIiVSBPSKWpK6iXPJ+kksHVOuYEodQKdoVKiBuJB
-# rGR4tOOi9IhYPBGckZKgX91xGUyrjWIJrlt3LTriwwNYkX/t32oXWUhPVV7SM8Ji
-# /o8UIiDe4LuK/MTT9SIvVjL/J2vSWONLOFRHjTisRVQVVB566ZBVTppgpxlPKoOU
-# ox6E4ySpfo0aVKz8anK9VfpomLMC9I1Pj15YlcJMaB+EMM1Ru0d0i6KW8E2GlpQ8
-# k82G4aukRGKTJiP97f6dhb6FsPnkgD4mQg==
+# aWduaW5nIENBIDIwMjAwHhcNMjYwMzAyMjE1MjMzWhcNMjcwMjI3MTM0MDU2WjCC
+# AQQxHTAbBgNVBA8MFFByaXZhdGUgT3JnYW5pemF0aW9uMRIwEAYDVQQFEwk1MTIy
+# OTE2NDIxEzARBgsrBgEEAYI3PAIBAxMCSUwxCzAJBgNVBAYTAklMMRkwFwYDVQQI
+# ExBDZW50cmFsIERpc3RyaWN0MRQwEgYDVQQHEwtQZXRhaCBUaWt2YTEXMBUGA1UE
+# CRMOOSBIYXBzYWdvdCBTdC4xHzAdBgNVBAoTFkN5YmVyQXJrIFNvZnR3YXJlIEx0
+# ZC4xHzAdBgNVBAMTFkN5YmVyQXJrIFNvZnR3YXJlIEx0ZC4xITAfBgkqhkiG9w0B
+# CQEWEmFkbWluQGN5YmVyYXJrLmNvbTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCC
+# AgoCggIBAKtAr5PeV7TdJZDWUNp8j60tepBmgC2+9Dw8tUh+RsLhqaSNi0dUc7i9
+# yznveSdnfE4l2U8ZXyEILjQsSJw3SaPaXMSOzR4wVnuTc1nTzKBOS3oa6Yil7rlu
+# gNXVj8dmEEehcPuAkF4ciqt6YChi5a6DD/r8GYuHv+/75XDZCD1nTPesDLIN+RAU
+# aqHWLF0XRDXwF/JgB6W+lzIuYeiXdM/jPxZqvg1d7WKZQCy0maucWE/n4N4/8nPT
+# qLm3y8jhUdP6YGUlyJLbC4fxbVW1KrhDMY1DOOtItuBiOeBVAvVctbw/kAvEc32Y
+# Iz3qIWTmcR0VzVVV6IlNWOrMqJZEvtHlqRVkekLJXB5pVw6b3PuelU92cb+VtUnB
+# hewMxSkPj8094wN7urFk7wXxVtNVTYtkmT5ThcphO5Sha1bCfTgymePAfUJW2p2o
+# FdNBDeMoSmVlTDDlffRpyMzFZpHpc6v0HzeLmkEcZk+HRf5dgeRMQZWt/Mgsizwe
+# w0RuaCeQlphX7RgBRkC9rT57RCcBMtW3blk4Vz6qncCKCLBCJK1CIrC2frGX7vqt
+# In+0zR1K0ec8tTH5im5QEE72MuMV+/4KbP+ISojaQ8JFZvqESxyAUbjpQcE2pfzv
+# fwKiSXTyOCv9buuHDViUhoSc9oEKA3iuhc8Yz21F4CO0MTj014+FAgMBAAGjggHV
+# MIIB0TAOBgNVHQ8BAf8EBAMCB4AwgZ8GCCsGAQUFBwEBBIGSMIGPMEwGCCsGAQUF
+# BzAChkBodHRwOi8vc2VjdXJlLmdsb2JhbHNpZ24uY29tL2NhY2VydC9nc2djY3I0
+# NWV2Y29kZXNpZ25jYTIwMjAuY3J0MD8GCCsGAQUFBzABhjNodHRwOi8vb2NzcC5n
+# bG9iYWxzaWduLmNvbS9nc2djY3I0NWV2Y29kZXNpZ25jYTIwMjAwVQYDVR0gBE4w
+# TDBBBgkrBgEEAaAyAQIwNDAyBggrBgEFBQcCARYmaHR0cHM6Ly93d3cuZ2xvYmFs
+# c2lnbi5jb20vcmVwb3NpdG9yeS8wBwYFZ4EMAQMwCQYDVR0TBAIwADBHBgNVHR8E
+# QDA+MDygOqA4hjZodHRwOi8vY3JsLmdsb2JhbHNpZ24uY29tL2dzZ2NjcjQ1ZXZj
+# b2Rlc2lnbmNhMjAyMC5jcmwwHQYDVR0RBBYwFIESYWRtaW5AY3liZXJhcmsuY29t
+# MBMGA1UdJQQMMAoGCCsGAQUFBwMDMB8GA1UdIwQYMBaAFCWd0PxZCYZjxezzsRM7
+# VxwDkjYRMB0GA1UdDgQWBBR/nObXnnoINvefWdWmW4iZSqmPAjANBgkqhkiG9w0B
+# AQsFAAOCAgEAvpUZ9sMYv3kb7+v5CzJoUgOAtOF21kKgzqrgRmwH/xyuXkhs+tY9
+# LCE3ldhZmAJIfgBKZuKUQL5eFmLHltBevBKfgmfaT6uoG0sJ3QyNu46m2hMr/gvm
+# Kms2zfFGOZxG8wHeZUQ1v8imN80Frvvy1DIdA1QOW4hIJvt1GbCaS6TTC3eO9/fO
+# r22hHk0IBt+LtmSeA/rdFsnwT4Y4SY4mebZZePHH9c+KreM64DAP61rLodKQCw14
+# jbPTlQRSelbJpb+Vmo7q1sieuCY5US2KsXG/4P/ENEJFnwH+ib671IjN7L4AISzt
+# BoKY81CNMBSziqMpdCwrAiXBQhBHdKUG28MhrxS1gB564h+fo9tMrV5pe6Jp60Sa
+# Wn5aQzu/nWR6z+gUR9mk5SdjBow+Liykxd/2o5wT8AmJ6XE/vGd7lK8MnuoTeJ65
+# WQOsMd7MyB4tP3CV9/r+JESfPExxK3ybfWp1cAigtzpGII2fUM0sx43Wd7w0Ugfp
+# OjmGOUKpshp6zJAqG+NNbupqk5vHAiddvHHRrZGLF7qbc0jcdQyxygyxQLe5Quu3
+# M/bZ5+b4T+4xT/b0hmU4WmiHV8h3OF6U6OvIU2+gJ8NtRSkl+Jz/nhhU5hhNh2Ad
+# TB108wYNMYET2xxoxtEPL5Sb0rX07I4lEGPpbwAcP1jds2+pgeB1pYcxghnUMIIZ
+# 0AIBATBsMFwxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBHbG9iYWxTaWduIG52LXNh
+# MTIwMAYDVQQDEylHbG9iYWxTaWduIEdDQyBSNDUgRVYgQ29kZVNpZ25pbmcgQ0Eg
+# MjAyMAIMW9aRAzD9l8BmlQzAMA0GCWCGSAFlAwQCAQUAoHwwEAYKKwYBBAGCNwIB
+# DDECMAAwGQYJKoZIhvcNAQkDMQwGCisGAQQBgjcCAQQwHAYKKwYBBAGCNwIBCzEO
+# MAwGCisGAQQBgjcCARUwLwYJKoZIhvcNAQkEMSIEIMZVfI8Q/zEG4pbQ+obc9GXN
+# AfQuIa+k9UrCPINaqZZEMA0GCSqGSIb3DQEBAQUABIICAIMk+/cNh38Mh4apYcat
+# SMexqDfOK77kifuyINwl46vQCFfOKaj/RMXeyVb4NlyvPjkokX7+tAGjwnqwq7gd
+# bMVFX7EMdA59oNGKtSIGfYk1MTEMReMoOZmLlmhj3CTlo0bCTBjbPIwrqHYHH6Mg
+# YevvI1QDU+WyDVeJoH/KjKx3+VHKWZyvbioopfPelh2V9BiHE9Ej/yYyxtsWtdN/
+# utRSLNm9tJW4n6zcCAf7YJ8HTMXAfnSwNBGMb4TIvDpHYeVwn1hv2PnMHgz4MibU
+# +J2Cf+5jk6eotd0ijJeMswV1rpK+m42mRGEG9DiesS4LxNBY0uJUvjaRkdt3TsN0
+# T5Cr9kPVUHb8hAJlbfJK9zcY/4fDdXeYzi0FrWBNb+MkPxLC3IetGLvuuD0O/QgL
+# zL5rNQ3Mgq0VABwi7LQUiw5Z7+hdoI36mY6yDaztpgZWHcl42/uxEeeHbfDqKpok
+# MKXca8bePyDLL89agFAS7OpcuBiWV09+wW9yJ4LDYssyRjnscdHAZ9PR8/DdrXqo
+# DxFo5rOI1XrVXUsQwqgJJoxC9FKTHTQdDofe42JOT9PNADujLmy+oretBgZWpJD/
+# DsPEOfYYeEd/msB2TGDA7J9LKcvLBHCIDCMo9gdDZDkxwoc/cOtT+EgJouT5EkCC
+# OIH6yQ3EODW0+Nyh30OHNUH7oYIWuzCCFrcGCisGAQQBgjcDAwExghanMIIWowYJ
+# KoZIhvcNAQcCoIIWlDCCFpACAQMxDTALBglghkgBZQMEAgEwgd8GCyqGSIb3DQEJ
+# EAEEoIHPBIHMMIHJAgEBBgsrBgEEAaAyAgMBAjAxMA0GCWCGSAFlAwQCAQUABCCC
+# 3OHzNEImwDRlT8fEXuke3vAjzAYft/7Th8tEdiCkDQIUdga6xIQF/RkGM82dhVvP
+# cLjFel0YDzIwMjYwMzA1MTcxNDU5WjADAgEBoFikVjBUMQswCQYDVQQGEwJCRTEZ
+# MBcGA1UECgwQR2xvYmFsU2lnbiBudi1zYTEqMCgGA1UEAwwhR2xvYmFsc2lnbiBU
+# U0EgZm9yIENvZGVTaWduMSAtIFI2oIISSzCCBmMwggRLoAMCAQICEAEACyAFs5QH
+# Yts+NnmUm6kwDQYJKoZIhvcNAQEMBQAwWzELMAkGA1UEBhMCQkUxGTAXBgNVBAoT
+# EEdsb2JhbFNpZ24gbnYtc2ExMTAvBgNVBAMTKEdsb2JhbFNpZ24gVGltZXN0YW1w
+# aW5nIENBIC0gU0hBMzg0IC0gRzQwHhcNMjUwNDExMTQ0NzM5WhcNMzQxMjEwMDAw
+# MDAwWjBUMQswCQYDVQQGEwJCRTEZMBcGA1UECgwQR2xvYmFsU2lnbiBudi1zYTEq
+# MCgGA1UEAwwhR2xvYmFsc2lnbiBUU0EgZm9yIENvZGVTaWduMSAtIFI2MIIBojAN
+# BgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAolvEqk1J5SN4PuCF6+aqCj7V8qyo
+# p0Rh94rLmY37Cn8er80SkfKzdJHJk3Tqa9QY4UwV6hedXfSb5gk0Xydy3MNEj1qE
+# +ZomPEcjC7uRtGdfB/PtnieWJzjtPVUlmEPrUMsoFU7woJScRV1W6/6efi2BySHX
+# shZ30V1EDZ2lKQ0DK3q3bI4sJE/5n/dQy8iL4hjTaS9v0YQy5RJY+o1NWhxP/HsN
+# um67Or4rFDsGIE85hg5r4g3CXFuiqWvlNmPbCBWgdxp/PCqY0Lie04DuKbDwRd6n
+# rm5AH5oIRJyFUjLvG4HO0L1UXYMuJ6J1JzO438RA0mJRvU2ZwbI6yiFHaS0x3SgF
+# akvhELLn4tmwngYPj+FDX3LaWHnni/MGJXRxnN0pQdYJqEYhKUlrMH9+2Klndcz/
+# 9yXYGEywTt88d3y+TUFvZlAA0BMOYMMrYFQEptlRg2DYrx5sWtX1qvCzk6sEBLRV
+# PEbE0i+J01ILlBzRpcJusZUQyGK2RVSOFfXPAgMBAAGjggGoMIIBpDAOBgNVHQ8B
+# Af8EBAMCB4AwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwHQYDVR0OBBYEFIBDTPy6
+# bR0T0nUSiAl3b9vGT5VUMFYGA1UdIARPME0wCAYGZ4EMAQQCMEEGCSsGAQQBoDIB
+# HjA0MDIGCCsGAQUFBwIBFiZodHRwczovL3d3dy5nbG9iYWxzaWduLmNvbS9yZXBv
+# c2l0b3J5LzAMBgNVHRMBAf8EAjAAMIGQBggrBgEFBQcBAQSBgzCBgDA5BggrBgEF
+# BQcwAYYtaHR0cDovL29jc3AuZ2xvYmFsc2lnbi5jb20vY2EvZ3N0c2FjYXNoYTM4
+# NGc0MEMGCCsGAQUFBzAChjdodHRwOi8vc2VjdXJlLmdsb2JhbHNpZ24uY29tL2Nh
+# Y2VydC9nc3RzYWNhc2hhMzg0ZzQuY3J0MB8GA1UdIwQYMBaAFOoWxmnn48tXRTkz
+# pPBAvtDDvWWWMEEGA1UdHwQ6MDgwNqA0oDKGMGh0dHA6Ly9jcmwuZ2xvYmFsc2ln
+# bi5jb20vY2EvZ3N0c2FjYXNoYTM4NGc0LmNybDANBgkqhkiG9w0BAQwFAAOCAgEA
+# t6bHSpl2dP0gYie9iXw3Bz5XzwsvmiYisEjboyRZin+jqH26IFq7fQMIrN5VdX8K
+# Gl5pEe21b8skPfUctiroo6QS5oWESl4kzZow2iJ/qJn76TkvL+v2f4mHolGLBwyD
+# m74fXr68W63xuiYSpnbf7NYPyBaHI7zJ/ErST4bA00TC+ftPttS+G/MhNUaKg34y
+# aJ8Z6AENnPdCB8VIrt/sqd6R1k89Ojx1jL36QBEPUr2dtIIlS3Ki74CU15YTvG+X
+# xt9cwE+0Gx/qRQv8YbF+UcsdgYU4jNRZB0kTV3Bsd3lyIWmt8DT4RQj9LQ1ILOpq
+# G/Czwd9q9GJL6jSJeSq1AC4ZocVMuqcYd/D9JpIML9BQ/wk5lgJkgXEc1gRgPsDs
+# U9zz36JymN1+Yhvx0Vr67jr0Qfqk3V0z6/xVmEAJKafTeIfD9hQchjiGkyw3EKNi
+# yHyM37rdK/BsTSx0rB3MHdqE9/dHQX5NUOQCWUvhkWy10u71yzGKWnbAWQ6NNuq9
+# ftcwYFTmcyo5YbFwzfkyS+Y78+O9utqgi6VoE2NzVJbucqGLZtJFJzGJD7xe/rqU
+# LwYHeQ3HPSnNCagb6jqBeFSnXTx0GbuYuk3jA51dQNtsogVAGXCqHsh62QVAl/ga
+# dTfcRaMpIWAc3CPup3x19dDApspmRyOVzXBUtsiCWsIwggZZMIIEQaADAgECAg0B
+# 7BySQN79LkBdfEd0MA0GCSqGSIb3DQEBDAUAMEwxIDAeBgNVBAsTF0dsb2JhbFNp
+# Z24gUm9vdCBDQSAtIFI2MRMwEQYDVQQKEwpHbG9iYWxTaWduMRMwEQYDVQQDEwpH
+# bG9iYWxTaWduMB4XDTE4MDYyMDAwMDAwMFoXDTM0MTIxMDAwMDAwMFowWzELMAkG
+# A1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExMTAvBgNVBAMTKEds
+# b2JhbFNpZ24gVGltZXN0YW1waW5nIENBIC0gU0hBMzg0IC0gRzQwggIiMA0GCSqG
+# SIb3DQEBAQUAA4ICDwAwggIKAoICAQDwAuIwI/rgG+GadLOvdYNfqUdSx2E6Y3w5
+# I3ltdPwx5HQSGZb6zidiW64HiifuV6PENe2zNMeswwzrgGZt0ShKwSy7uXDycq6M
+# 95laXXauv0SofEEkjo+6xU//NkGrpy39eE5DiP6TGRfZ7jHPvIo7bmrEiPDul/bc
+# 8xigS5kcDoenJuGIyaDlmeKe9JxMP11b7Lbv0mXPRQtUPbFUUweLmW64VJmKqDGS
+# O/J6ffwOWN+BauGwbB5lgirUIceU/kKWO/ELsX9/RpgOhz16ZevRVqkuvftYPbWF
+# +lOZTVt07XJLog2CNxkM0KvqWsHvD9WZuT/0TzXxnA/TNxNS2SU07Zbv+GfqCL6P
+# SXr/kLHU9ykV1/kNXdaHQx50xHAotIB7vSqbu4ThDqxvDbm19m1W/oodCT4kDmcm
+# x/yyDaCUsLKUzHvmZ/6mWLLU2EESwVX9bpHFu7FMCEue1EIGbxsY1TbqZK7O/fUF
+# 5uJm0A4FIayxEQYjGeT7BTRE6giunUlnEYuC5a1ahqdm/TMDAd6ZJflxbumcXQJM
+# YDzPAo8B/XLukvGnEt5CEk3sqSbldwKsDlcMCdFhniaI/MiyTdtk8EWfusE/VKPY
+# dgKVbGqNyiJc9gwE4yn6S7Ac0zd0hNkdZqs0c48efXxeltY9GbCX6oxQkW2vV4Z+
+# EDcdaxoU3wIDAQABo4IBKTCCASUwDgYDVR0PAQH/BAQDAgGGMBIGA1UdEwEB/wQI
+# MAYBAf8CAQAwHQYDVR0OBBYEFOoWxmnn48tXRTkzpPBAvtDDvWWWMB8GA1UdIwQY
+# MBaAFK5sBaOTE+Ki5+LXHNbH8H/IZ1OgMD4GCCsGAQUFBwEBBDIwMDAuBggrBgEF
+# BQcwAYYiaHR0cDovL29jc3AyLmdsb2JhbHNpZ24uY29tL3Jvb3RyNjA2BgNVHR8E
+# LzAtMCugKaAnhiVodHRwOi8vY3JsLmdsb2JhbHNpZ24uY29tL3Jvb3QtcjYuY3Js
+# MEcGA1UdIARAMD4wPAYEVR0gADA0MDIGCCsGAQUFBwIBFiZodHRwczovL3d3dy5n
+# bG9iYWxzaWduLmNvbS9yZXBvc2l0b3J5LzANBgkqhkiG9w0BAQwFAAOCAgEAf+KI
+# 2VdnK0JfgacJC7rEuygYVtZMv9sbB3DG+wsJrQA6YDMfOcYWaxlASSUIHuSb99ak
+# DY8elvKGohfeQb9P4byrze7AI4zGhf5LFST5GETsH8KkrNCyz+zCVmUdvX/23oLI
+# t59h07VGSJiXAmd6FpVK22LG0LMCzDRIRVXd7OlKn14U7XIQcXZw0g+W8+o3V5SR
+# GK/cjZk4GVjCqaF+om4VJuq0+X8q5+dIZGkv0pqhcvb3JEt0Wn1yhjWzAlcfi5z8
+# u6xM3vreU0yD/RKxtklVT3WdrG9KyC5qucqIwxIwTrIIc59eodaZzul9S5YszBZr
+# GM3kWTeGCSziRdayzW6CdaXajR63Wy+ILj198fKRMAWcznt8oMWsr1EG8BHHHTDF
+# UVZg6HyVPSLj1QokUyeXgPpIiScseeI85Zse46qEgok+wEr1If5iEO0dMPz2zOpI
+# J3yLdUJ/a8vzpWuVHwRYNAqJ7YJQ5NF7qMnmvkiqK1XZjbclIA4bUaDUY6qD6mxy
+# YUrJ+kPExlfFnbY8sIuwuRwx773vFNgUQGwgHcIt6AvGjW2MtnHtUiH+Pvafnzka
+# rqzSL3ogsfSsqh3iLRSd+pZqHcY8yvPZHL9TTaRHWXyVxENB+SXiLBB+gfkNlKd9
+# 8rUJ9dhgckBQlSDUQ0S++qCV5yBZtnjGpGqqIpswggWDMIIDa6ADAgECAg5F5rsD
+# gzPDhWVI5v9FUTANBgkqhkiG9w0BAQwFADBMMSAwHgYDVQQLExdHbG9iYWxTaWdu
+# IFJvb3QgQ0EgLSBSNjETMBEGA1UEChMKR2xvYmFsU2lnbjETMBEGA1UEAxMKR2xv
+# YmFsU2lnbjAeFw0xNDEyMTAwMDAwMDBaFw0zNDEyMTAwMDAwMDBaMEwxIDAeBgNV
+# BAsTF0dsb2JhbFNpZ24gUm9vdCBDQSAtIFI2MRMwEQYDVQQKEwpHbG9iYWxTaWdu
+# MRMwEQYDVQQDEwpHbG9iYWxTaWduMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIIC
+# CgKCAgEAlQfoc8pm+ewUyns89w0I8bRFCyyCtEjG61s8roO4QZIzFKRvf+kqzMaw
+# iGvFtonRxrL/FM5RFCHsSt0bWsbWh+5NOhUG7WRmC5KAykTec5RO86eJf094YwjI
+# ElBtQmYvTbl5KE1SGooagLcZgQ5+xIq8ZEwhHENo1z08isWyZtWQmrcxBsW+4m0y
+# BqYe+bnrqqO4v76CY1DQ8BiJ3+QPefXqoh8q0nAue+e8k7ttU+JIfIwQBzj/ZrJ3
+# YX7g6ow8qrSk9vOVShIHbf2MsonP0KBhd8hYdLDUIzr3XTrKotudCd5dRC2Q8YHN
+# V5L6frxQBGM032uTGL5rNrI55KwkNrfw77YcE1eTtt6y+OKFt3OiuDWqRfLgnTah
+# b1SK8XJWbi6IxVFCRBWU7qPFOJabTk5aC0fzBjZJdzC8cTflpuwhCHX85mEWP3fV
+# 2ZGXhAps1AJNdMAU7f05+4PyXhShBLAL6f7uj+FuC7IIs2FmCWqxBjplllnA8DX9
+# ydoojRoRh3CBCqiadR2eOoYFAJ7bgNYl+dwFnidZTHY5W+r5paHYgw/R/98wEfmF
+# zzNI9cptZBQselhP00sIScWVZBpjDnk99bOMylitnEJFeW4OhxlcVLFltr+Mm9wT
+# 6Q1vuC7cZ27JixG1hBSKABlwg3mRl5HUGie/Nx4yB9gUYzwoTK8CAwEAAaNjMGEw
+# DgYDVR0PAQH/BAQDAgEGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0OBBYEFK5sBaOT
+# E+Ki5+LXHNbH8H/IZ1OgMB8GA1UdIwQYMBaAFK5sBaOTE+Ki5+LXHNbH8H/IZ1Og
+# MA0GCSqGSIb3DQEBDAUAA4ICAQCDJe3o0f2VUs2ewASgkWnmXNCE3tytok/oR3jW
+# ZZipW6g8h3wCitFutxZz5l/AVJjVdL7BzeIRka0jGD3d4XJElrSVXsB7jpl4FkMT
+# VlezorM7tXfcQHKso+ubNT6xCCGh58RDN3kyvrXnnCxMvEMpmY4w06wh4OMd+tgH
+# M3ZUACIquU0gLnBo2uVT/INc053y/0QMRGby0uO9RgAabQK6JV2NoTFR3VRGHE3b
+# mZbvGhwEXKYV73jgef5d2z6qTFX9mhWpb+Gm+99wMOnD7kJG7cKTBYn6fWN7P9Bx
+# gXwA6JiuDng0wyX7rwqfIGvdOxOPEoziQRpIenOgd2nHtlx/gsge/lgbKCuobK1e
+# bcAF0nu364D+JTf+AptorEJdw+71zNzwUHXSNmmc5nsE324GabbeCglIWYfrexRg
+# emSqaUPvkcdM7BjdbO9TLYyZ4V7ycj7PVMi9Z+ykD0xF/9O5MCMHTI8Qv4aW2Zla
+# tJlXHKTMuxWJU7osBQ/kxJ4ZsRg01Uyduu33H68klQR4qAO77oHl2l98i0qhkHQl
+# p7M+S8gsVr3HyO844lyS8Hn3nIS6dC1hASB+ftHyTwdZX4stQ1LrRgyU4fVmR3l3
+# 1VRbH60kN8tFWk6gREjI2LCZxRWECfbWSUnAZbjmGnFuoKjxguhFPmzWAtcKZ4MF
+# WsmkEDGCA0kwggNFAgEBMG8wWzELMAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2Jh
+# bFNpZ24gbnYtc2ExMTAvBgNVBAMTKEdsb2JhbFNpZ24gVGltZXN0YW1waW5nIENB
+# IC0gU0hBMzg0IC0gRzQCEAEACyAFs5QHYts+NnmUm6kwCwYJYIZIAWUDBAIBoIIB
+# LTAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwKwYJKoZIhvcNAQk0MR4wHDAL
+# BglghkgBZQMEAgGhDQYJKoZIhvcNAQELBQAwLwYJKoZIhvcNAQkEMSIEIMSYitCp
+# Xp+3U9252IiSCAT0dTPQJXpcGlddye/DCbv1MIGwBgsqhkiG9w0BCRACLzGBoDCB
+# nTCBmjCBlwQgcl7yf0jhbmm5Y9hCaIxbygeojGkXBkLI/1ord69gXP0wczBfpF0w
+# WzELMAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExMTAvBgNV
+# BAMTKEdsb2JhbFNpZ24gVGltZXN0YW1waW5nIENBIC0gU0hBMzg0IC0gRzQCEAEA
+# CyAFs5QHYts+NnmUm6kwDQYJKoZIhvcNAQELBQAEggGAX/m3X4Gw0A88qvOWQGhC
+# f9dyGo0KR5QeyEgvKVQxlINvreARbSnL8u7vS1Xcaei9LDGJtOL8IC5HnCEP6Xkp
+# +A4U8KzkUhXSa5T8ccasB9f4lu5VNIBvsZsoSaq3KhLws3pFgmEE98oHyU2ssb1k
+# ifkrxOrk5ndgmani9PMp7xVl6+palIh5QSfoq72GvX3XQl0yijAObKxXa12wQXiE
+# 1d/H+Ir1fuEee1Sxqbq/0ZD9zJ+bmGmLmYwTkuVrD+1URv+xR3CMG2+JdcUhcJUt
+# bKrjwNq3MQp6TKVJ5euQFbbHX8pb487wRdw2e1LzUqvwYZ7Jw3Up4J2BBN3LSnfY
+# NRzylpVmqxCWJtzglg921zF7tPrIfzA0PTzUt9MaDXVmnDC8A3z9zy7wQO34dr1I
+# Po/Ar9y/bwEOdPyvJGGV+mqj+17yG87TDP5rFydDFGbmd9X6rpffg9d2BkTPlMOQ
+# MHmhwK5Sa8nHAVeNX93Bah1H0cb75UB02qdCMlbt0q9s
 # SIG # End signature block
